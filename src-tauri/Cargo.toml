@@ -1,0 +1,39 @@
+[package]
+name = "filemind"
+version = "0.1.0"
+description = "FileMind - AI File Management"
+authors = ["FileMind"]
+edition = "2021"
+
+[lib]
+name = "filemind_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+once_cell = "1"
+dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+walkdir = "2"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

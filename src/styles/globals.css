@@ -1,0 +1,188 @@
+@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --color-bg-base: #050608;
+  --color-bg-elevated: #0c0d12;
+  --color-bg-card: #11131a;
+  --color-bg-card-hover: #161922;
+  --color-border-subtle: #1f2230;
+  --color-border-default: #2b2f42;
+  --color-border-strong: #3a4060;
+
+  --color-text-primary: #f4f5f8;
+  --color-text-secondary: #a0a5b8;
+  --color-text-tertiary: #6c7088;
+  --color-text-muted: #494c5e;
+
+  --color-accent: #22c55e;
+  --color-accent-glow: rgba(34, 197, 94, 0.4);
+  --color-ai: #a78bfa;
+  --color-ai-glow: rgba(167, 139, 250, 0.35);
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-sensitive: #dc2626;
+
+  --font-sans: "Fira Sans", "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "Fira Code", "SF Mono", Menlo, monospace;
+  --font-display: "Fira Sans", "Inter", system-ui, sans-serif;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+body {
+  background:
+    radial-gradient(ellipse at top left, rgba(34, 197, 94, 0.06), transparent 50%),
+    radial-gradient(ellipse at bottom right, rgba(167, 139, 250, 0.05), transparent 50%),
+    var(--color-bg-base);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+::selection {
+  background: var(--color-accent-glow);
+  color: var(--color-text-primary);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+input:focus, textarea:focus, button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(17, 19, 26, 0.6);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid var(--color-border-subtle);
+  }
+
+  .glass-strong {
+    background: rgba(12, 13, 18, 0.85);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid var(--color-border-default);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, #22c55e 0%, #a78bfa 60%, #38bdf8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 24px var(--color-accent-glow);
+  }
+
+  .glow-ai {
+    box-shadow: 0 0 24px var(--color-ai-glow);
+  }
+
+  .ring-grid {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .noise::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.7'/></svg>");
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.06) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
