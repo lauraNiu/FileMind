@@ -124,3 +124,15 @@ pub struct EnrichResult {
     pub ai_skipped: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DayCount {
+    pub day: i64,
+    pub count: i64,
+}
+

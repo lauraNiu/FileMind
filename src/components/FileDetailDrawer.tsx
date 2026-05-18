@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Link2,
   Tag,
+  Plus,
 } from "lucide-react";
 import type { FileItem, RelatedFile } from "@/lib/types";
 import { api } from "@/lib/api";
@@ -19,6 +20,7 @@ import { FileIcon } from "./FileIcon";
 interface Props {
   file: FileItem | null;
   onClose: () => void;
+  onTagsChanged?: (fileId: string, newTags: string[]) => void;
 }
 
 const RELATION_LABELS: Record<string, string> = {
@@ -35,20 +37,34 @@ const RELATION_COLORS: Record<string, string> = {
   similar: "text-violet-400 bg-violet-400/10 border-violet-400/20",
 };
 
-export function FileDetailDrawer({ file, onClose }: Props) {
+export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
   const [related, setRelated] = useState<RelatedFile[]>([]);
   const [regenerating, setRegenerating] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const [addingTag, setAddingTag] = useState(false);
+  const [newTag, setNewTag] = useState("");
+  const tagInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!file) {
       setRelated([]);
       setSummary(null);
+      setTags([]);
+      setAddingTag(false);
+      setNewTag("");
       return;
     }
     setSummary(file.summary);
+    setTags(file.tags ?? []);
     api.getRelatedFiles(file.id).then(setRelated).catch(() => setRelated([]));
   }, [file]);
+
+  useEffect(() => {
+    if (addingTag) {
+      setTimeout(() => tagInputRef.current?.focus(), 50);
+    }
+  }, [addingTag]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -70,6 +86,37 @@ export function FileDetailDrawer({ file, onClose }: Props) {
     } finally {
       setRegenerating(false);
     }
+  };
+
+  const persistTags = async (next: string[]) => {
+    if (!file) return;
+    setTags(next);
+    try {
+      await api.updateFileTags(file.id, next);
+      onTagsChanged?.(file.id, next);
+    } catch (e) {
+      toast.error("保存标签失败：" + String(e));
+    }
+  };
+
+  const removeTag = (tag: string) => {
+    persistTags(tags.filter((t) => t !== tag));
+  };
+
+  const addTag = () => {
+    const t = newTag.trim();
+    if (!t) {
+      setAddingTag(false);
+      return;
+    }
+    if (tags.includes(t)) {
+      toast.info("标签已存在");
+      setNewTag("");
+      return;
+    }
+    persistTags([...tags, t]);
+    setNewTag("");
+    setAddingTag(false);
   };
 
   const copy = (text: string) => {
@@ -137,28 +184,63 @@ export function FileDetailDrawer({ file, onClose }: Props) {
                   </button>
                 </div>
                 <div className="text-[13px] text-[var(--color-text-secondary)] leading-relaxed p-3 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)]">
-                  {summary ?? <span className="text-[var(--color-text-tertiary)] italic">无摘要</span>}
+                  {summary ?? (
+                    <span className="text-[var(--color-text-tertiary)] italic">
+                      暂无摘要，点「重新生成」让 AI 写一句
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {file.tags && file.tags.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--color-text-tertiary)] font-mono mb-2">
-                    <Tag className="w-3 h-3" />
-                    标签
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {file.tags.map((t) => (
-                      <span
-                        key={t}
-                        className="text-[11px] px-2 py-0.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[var(--color-text-secondary)]"
-                      >
-                        {t}
-                      </span>
-                    ))}
-                  </div>
+              <div>
+                <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--color-text-tertiary)] font-mono mb-2">
+                  <Tag className="w-3 h-3" />
+                  标签
                 </div>
-              )}
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  {tags.map((t) => (
+                    <span
+                      key={t}
+                      className="group/tag text-[11px] pl-2 pr-1 py-0.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[var(--color-text-secondary)] flex items-center gap-1 hover:border-[var(--color-border-default)]"
+                    >
+                      {t}
+                      <button
+                        onClick={() => removeTag(t)}
+                        className="w-4 h-4 flex items-center justify-center rounded hover:bg-[var(--color-danger)]/20 hover:text-[var(--color-danger)] opacity-0 group-hover/tag:opacity-100"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                  {addingTag ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        ref={tagInputRef}
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") addTag();
+                          if (e.key === "Escape") {
+                            setAddingTag(false);
+                            setNewTag("");
+                          }
+                        }}
+                        onBlur={addTag}
+                        placeholder="新标签"
+                        className="text-[11px] px-2 py-0.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-accent)]/40 outline-none w-24 text-[var(--color-text-primary)]"
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setAddingTag(true)}
+                      className="text-[11px] px-2 py-0.5 rounded border border-dashed border-[var(--color-border-default)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-text-secondary)] flex items-center gap-1"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                      添加
+                    </button>
+                  )}
+                </div>
+              </div>
 
               {file.project_name && (
                 <div>
@@ -176,16 +258,18 @@ export function FileDetailDrawer({ file, onClose }: Props) {
                 <div>
                   <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--color-text-tertiary)] font-mono mb-2">
                     <Link2 className="w-3 h-3" />
-                    相关文件
+                    相关文件 · {related.length}
                   </div>
-                  <div className="space-y-1.5">
-                    {related.slice(0, 5).map((r) => (
+                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                    {related.slice(0, 10).map((r) => (
                       <div
-                        key={r.file.id}
-                        className="flex items-center gap-2 p-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] transition-colors cursor-pointer"
+                        key={r.file.id + r.relation}
+                        className="flex items-center gap-2 p-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] transition-colors"
                       >
                         <FileIcon ext={r.file.ext} className="w-3.5 h-3.5" />
-                        <span className="text-[12px] truncate flex-1">{r.file.name}</span>
+                        <span className="text-[12px] truncate flex-1" title={r.file.name}>
+                          {r.file.name}
+                        </span>
                         <span
                           className={`text-[10px] px-1.5 py-0.5 rounded border ${RELATION_COLORS[r.relation]}`}
                         >
@@ -240,7 +324,7 @@ export function FileDetailDrawer({ file, onClose }: Props) {
             <div className="p-4 border-t border-[var(--color-border-subtle)] space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => toast.info("MVP 暂不支持，Phase 2 上线")}
+                  onClick={() => toast.info("Phase 2 上线：真接通 Finder")}
                   className="px-3 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border-default)] transition-colors flex items-center justify-center gap-1.5"
                 >
                   <FolderOpen className="w-3.5 h-3.5" />

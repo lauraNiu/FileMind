@@ -1,7 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
-import { Search, Share2, RotateCw, Maximize2, Sparkles, Wand2 } from "lucide-react";
+import { Search, Share2, RotateCw, Maximize2, Sparkles, Wand2, Palette } from "lucide-react";
 import { toast } from "sonner";
+
+const EXT_COLORS: Record<string, string> = {
+  pdf: "#f43f5e",
+  docx: "#3b82f6", doc: "#3b82f6", md: "#94a3b8", txt: "#94a3b8",
+  pptx: "#f97316", ppt: "#f97316", key: "#f97316",
+  xlsx: "#22c55e", xls: "#22c55e", csv: "#22c55e",
+  png: "#a855f7", jpg: "#a855f7", jpeg: "#a855f7", gif: "#a855f7",
+  webp: "#a855f7", svg: "#a855f7", heic: "#a855f7", cr2: "#a855f7",
+  mp4: "#ec4899", mov: "#ec4899",
+  mp3: "#eab308", wav: "#eab308",
+  zip: "#f59e0b", tar: "#f59e0b", gz: "#f59e0b", dmg: "#f59e0b", pkg: "#f59e0b",
+  py: "#06b6d4", ts: "#0ea5e9", tsx: "#0ea5e9",
+  js: "#facc15", jsx: "#facc15",
+  rs: "#fb923c", go: "#0ea5e9",
+  fig: "#a78bfa", sketch: "#a78bfa", psd: "#a78bfa",
+};
+
+function colorForExt(ext: string): string {
+  return EXT_COLORS[ext.toLowerCase()] ?? "#6c7088";
+}
+
 import { motion } from "framer-motion";
 import { GlassCard } from "@/components/GlassCard";
 import { FileDetailDrawer } from "@/components/FileDetailDrawer";
@@ -28,6 +49,7 @@ export function Graph() {
   const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
   const [enriching, setEnriching] = useState<null | "heuristic" | "ai">(null);
+  const [colorMode, setColorMode] = useState<"project" | "type">("project");
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["reference", "derived", "co-project", "similar"])
   );
@@ -191,6 +213,31 @@ export function Graph() {
               <Sparkles className={`w-3.5 h-3.5 ${enriching === "ai" ? "animate-pulse" : ""}`} />
               {enriching === "ai" ? "AI 思考中..." : "AI 智能补图"}
             </button>
+            <div className="flex items-center gap-0 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-card)] p-0.5">
+              <button
+                onClick={() => setColorMode("project")}
+                className={`px-2 py-1 text-[11px] rounded flex items-center gap-1 ${
+                  colorMode === "project"
+                    ? "bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-secondary)]"
+                }`}
+                title="按项目染色"
+              >
+                <Palette className="w-3 h-3" />
+                项目
+              </button>
+              <button
+                onClick={() => setColorMode("type")}
+                className={`px-2 py-1 text-[11px] rounded ${
+                  colorMode === "type"
+                    ? "bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-secondary)]"
+                }`}
+                title="按文件类型染色"
+              >
+                类型
+              </button>
+            </div>
             <button
               onClick={recenter}
               className="px-3 py-1.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors flex items-center gap-1.5"
@@ -295,7 +342,15 @@ export function Graph() {
             nodeCanvasObject={(node, ctx, globalScale) => {
               const n = node as GraphNode & { x?: number; y?: number };
               if (n.x === undefined || n.y === undefined) return;
-              const color = n.project_id ? projectsColorMap.get(n.project_id) ?? "#a78bfa" : "#6c7088";
+
+              const projectColor = n.project_id
+                ? projectsColorMap.get(n.project_id) ?? "#a78bfa"
+                : "#6c7088";
+              const typeColor = colorForExt(n.ext);
+
+              const fillColor = colorMode === "project" ? projectColor : typeColor;
+              const ringColor = colorMode === "project" ? typeColor : projectColor;
+
               const isSearched = searched.has(n.id);
               const isHover = hoverNode?.id === n.id;
               const r = 4 + Math.min(n.val ?? 2, 6);
@@ -303,16 +358,17 @@ export function Graph() {
               if (isSearched || isHover) {
                 ctx.beginPath();
                 ctx.arc(n.x, n.y, r + 6, 0, 2 * Math.PI);
-                ctx.fillStyle = `${color}33`;
+                ctx.fillStyle = `${fillColor}33`;
                 ctx.fill();
               }
 
               ctx.beginPath();
               ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-              ctx.fillStyle = color;
+              ctx.fillStyle = fillColor;
               ctx.fill();
-              ctx.strokeStyle = isHover ? "#f4f5f8" : `${color}80`;
-              ctx.lineWidth = isHover ? 1.5 : 0.8;
+
+              ctx.strokeStyle = isHover ? "#f4f5f8" : ringColor;
+              ctx.lineWidth = isHover ? 2 : 1.4;
               ctx.stroke();
 
               if (globalScale > 1.4 || isHover || isSearched) {
@@ -353,6 +409,42 @@ export function Graph() {
               </div>
             </GlassCard>
           </motion.div>
+        )}
+
+        {data.nodes.length > 0 && (
+          <div className="absolute top-4 right-4 p-2.5 rounded-md glass max-w-[200px]">
+            <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-tertiary)] font-mono mb-1.5">
+              {colorMode === "project" ? "项目（填充）/ 类型（环）" : "类型（填充）/ 项目（环）"}
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono">
+              {colorMode === "type"
+                ? Object.entries({
+                    文档: "#3b82f6",
+                    PPT: "#f97316",
+                    表格: "#22c55e",
+                    图片: "#a855f7",
+                    代码: "#06b6d4",
+                    PDF: "#f43f5e",
+                    设计: "#a78bfa",
+                    其它: "#6c7088",
+                  }).map(([k, c]) => (
+                    <div key={k} className="flex items-center gap-1 text-[var(--color-text-secondary)]">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} />
+                      {k}
+                    </div>
+                  ))
+                : Array.from(projectsColorMap.entries()).slice(0, 8).map(([pid, c]) => {
+                    const sample = data.nodes.find((n) => n.project_id === pid);
+                    const label = sample?.project_name ?? pid.slice(0, 10);
+                    return (
+                      <div key={pid} className="flex items-center gap-1 text-[var(--color-text-secondary)] truncate" title={label}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} />
+                        <span className="truncate">{label}</span>
+                      </div>
+                    );
+                  })}
+            </div>
+          </div>
         )}
 
         <div className="absolute bottom-4 right-4 text-[10px] font-mono text-[var(--color-text-tertiary)] flex items-center gap-2 px-2.5 py-1.5 rounded-md glass">

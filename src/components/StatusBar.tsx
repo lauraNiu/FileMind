@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { PauseCircle, Sparkles } from "lucide-react";
+import { PauseCircle, PlayCircle, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { motion } from "framer-motion";
 
@@ -13,6 +14,7 @@ export function StatusBar() {
     ai_used: 0,
     ai_budget: 30,
   });
+  const [paused, setPaused] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -77,9 +79,35 @@ export function StatusBar() {
           </div>
         </div>
 
-        <button className="flex items-center gap-1 px-2 py-0.5 hover:text-[var(--color-text-primary)] transition-colors">
-          <PauseCircle className="w-3.5 h-3.5" />
-          <span>全部暂停</span>
+        <button
+          onClick={() => {
+            const next = !paused;
+            setPaused(next);
+            if (next) {
+              toast.success("已暂停所有 AI 调用（前端拦截，刷新可恢复）", {
+                description: "完整的后端节流开关是 Phase 2 计划",
+              });
+            } else {
+              toast.info("已恢复 AI 调用");
+            }
+          }}
+          className={`flex items-center gap-1 px-2 py-0.5 transition-colors ${
+            paused
+              ? "text-[var(--color-warning)] hover:text-[var(--color-warning)]/80"
+              : "hover:text-[var(--color-text-primary)]"
+          }`}
+        >
+          {paused ? (
+            <>
+              <PlayCircle className="w-3.5 h-3.5" />
+              <span>已暂停</span>
+            </>
+          ) : (
+            <>
+              <PauseCircle className="w-3.5 h-3.5" />
+              <span>全部暂停</span>
+            </>
+          )}
         </button>
       </div>
     </div>

@@ -295,6 +295,58 @@ impl Db {
         Ok(out)
     }
 
+    pub fn update_tags(&self, id: &str, tags: &[String]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tags_json = serde_json::to_string(tags)?;
+        conn.execute(
+            "UPDATE files SET tags = ?1 WHERE id = ?2",
+            params![tags_json, id],
+        )?;
+        conn.execute(
+            "UPDATE files_fts SET tags = ?1 WHERE rowid = (SELECT rowid FROM files WHERE id = ?2)",
+            params![tags_json, id],
+        ).ok();
+        Ok(())
+    }
+
+    pub fn top_tags(&self, limit: i64) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT tags FROM files WHERE tags IS NOT NULL AND tags != '[]'")?;
+        let rows: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .collect();
+        let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for s in rows {
+            if let Ok(v) = serde_json::from_str::<Vec<String>>(&s) {
+                for t in v {
+                    *counts.entry(t).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut v: Vec<(String, i64)> = counts.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.truncate(limit as usize);
+        Ok(v)
+    }
+
+    pub fn activity_timeline(&self, days: i64) -> Result<Vec<(i64, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let since = now - days * 86400;
+        let mut stmt = conn.prepare(
+            "SELECT (mtime / 86400) AS day, COUNT(*) AS c
+             FROM files
+             WHERE mtime >= ?1
+             GROUP BY day ORDER BY day",
+        )?;
+        let rows: Vec<(i64, i64)> = stmt
+            .query_map(params![since], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
     pub fn update_summary(&self, id: &str, summary: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("UPDATE files SET summary = ?1 WHERE id = ?2", params![summary, id])?;

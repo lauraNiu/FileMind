@@ -135,6 +135,7 @@ pub async fn chat_message_stream(
     stream_id: String,
     message: String,
     history: Vec<ChatTurn>,
+    model: Option<String>,
 ) -> Result<ChatResponse, String> {
     let ai = state
         .ai
@@ -144,7 +145,7 @@ pub async fn chat_message_stream(
     let candidates = collect_candidates(&state.db, &message)?;
 
     let (content, reasoning, file_ids) = ai
-        .answer_question_stream(app, stream_id, &message, &history, &candidates)
+        .answer_question_stream(app, stream_id, &message, &history, &candidates, model.as_deref())
         .await
         .map_err(|e| e.to_string())?;
 
@@ -160,6 +161,38 @@ pub async fn chat_message_stream(
 #[tauri::command]
 pub fn clear_all_data(state: State<AppState>) -> Result<(), String> {
     state.db.clear_all().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_file_tags(
+    state: State<AppState>,
+    id: String,
+    tags: Vec<String>,
+) -> Result<(), String> {
+    state.db.update_tags(&id, &tags).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn top_tags(state: State<AppState>, limit: Option<i64>) -> Result<Vec<TagCount>, String> {
+    let l = limit.unwrap_or(15);
+    state
+        .db
+        .top_tags(l)
+        .map(|v| v.into_iter().map(|(tag, count)| TagCount { tag, count }).collect())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn activity_timeline(
+    state: State<AppState>,
+    days: Option<i64>,
+) -> Result<Vec<DayCount>, String> {
+    let d = days.unwrap_or(30);
+    state
+        .db
+        .activity_timeline(d)
+        .map(|v| v.into_iter().map(|(day, count)| DayCount { day, count }).collect())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

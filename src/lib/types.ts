@@ -107,3 +107,13 @@ export interface EnrichResult {
   ai_added: number;
   ai_skipped: number;
 }
+
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+export interface DayCount {
+  day: number;
+  count: number;
+}

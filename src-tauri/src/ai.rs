@@ -90,6 +90,7 @@ impl ZhipuClient {
         message: &str,
         history: &[ChatTurn],
         candidate_files: &[FileItem],
+        model_override: Option<&str>,
     ) -> Result<(String, String, Vec<String>)> {
         let system = build_system_prompt(candidate_files);
 
@@ -99,8 +100,9 @@ impl ZhipuClient {
         }
         messages.push(json!({ "role": "user", "content": message }));
 
+        let model = model_override.unwrap_or(&self.model);
         let body = json!({
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "temperature": 0.3,
             "max_tokens": 800,

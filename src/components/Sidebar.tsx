@@ -1,4 +1,5 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   FolderKanban,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 
 const navItems = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard },
@@ -21,14 +23,19 @@ const navItems = [
 
 const comingSoon = [{ label: "时间轴", icon: Clock }];
 
-const myViews = [
-  { label: "工作", count: 142 },
-  { label: "学习", count: 87 },
-  { label: "私人", count: 34 },
-];
-
 export function Sidebar() {
   const location = useLocation();
+  const nav = useNavigate();
+  const [myViews, setMyViews] = useState<{ label: string; count: number }[]>([]);
+
+  useEffect(() => {
+    api
+      .topTags(6)
+      .then((tags) =>
+        setMyViews(tags.map((t) => ({ label: t.tag, count: Number(t.count) })))
+      )
+      .catch(() => setMyViews([]));
+  }, [location.pathname]);
 
   return (
     <aside className="w-[220px] h-full flex flex-col bg-[var(--color-bg-elevated)] border-r border-[var(--color-border-subtle)]">
@@ -103,25 +110,35 @@ export function Sidebar() {
           })}
         </div>
 
-        <div className="mt-6">
-          <div className="px-3 mb-2 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium">
-            我的视图
+        {myViews.length > 0 && (
+          <div className="mt-6">
+            <div className="px-3 mb-2 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium flex items-center justify-between">
+              <span>热门标签</span>
+              <span className="text-[9px] text-[var(--color-text-muted)] font-normal normal-case tracking-normal">点击筛选</span>
+            </div>
+            {myViews.map((view, i) => {
+              const colors = ["#22c55e", "#a78bfa", "#38bdf8", "#f59e0b", "#ec4899", "#06b6d4"];
+              return (
+                <button
+                  key={view.label}
+                  onClick={() => nav(`/files?tag=${encodeURIComponent(view.label)}`)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-[13px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] rounded-md transition-colors group"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <div
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ background: colors[i % colors.length] }}
+                    />
+                    <span className="truncate">{view.label}</span>
+                  </span>
+                  <span className="text-[11px] text-[var(--color-text-tertiary)] font-mono group-hover:text-[var(--color-text-secondary)]">
+                    {view.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          {myViews.map((view) => (
-            <button
-              key={view.label}
-              className="w-full flex items-center justify-between px-3 py-2 text-[13px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] rounded-md transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ai)]" />
-                {view.label}
-              </span>
-              <span className="text-[11px] text-[var(--color-text-tertiary)] font-mono">
-                {view.count}
-              </span>
-            </button>
-          ))}
-        </div>
+        )}
       </nav>
     </aside>
   );

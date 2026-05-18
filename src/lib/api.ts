@@ -11,6 +11,8 @@ import type {
   ScanProgressEvent,
   StreamChunk,
   EnrichResult,
+  TagCount,
+  DayCount,
 } from "./types";
 
 export const api = {
@@ -52,7 +54,8 @@ export const api = {
   chatMessageStream: async (
     message: string,
     history: { role: string; content: string }[],
-    onChunk: (chunk: StreamChunk) => void
+    onChunk: (chunk: StreamChunk) => void,
+    model?: string
   ) => {
     const streamId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const eventName = `chat-stream-${streamId}`;
@@ -64,7 +67,12 @@ export const api = {
         content: string;
         reasoning?: string;
         file_ids?: string[];
-      }>("chat_message_stream", { streamId, message, history });
+      }>("chat_message_stream", {
+        streamId,
+        message,
+        history,
+        model: model ?? null,
+      });
       return final;
     } finally {
       unlisten();
@@ -90,4 +98,12 @@ export const api = {
       useAi,
       maxFiles: maxFiles ?? null,
     }),
+
+  updateFileTags: (id: string, tags: string[]) =>
+    invoke<void>("update_file_tags", { id, tags }),
+
+  topTags: (limit = 15) => invoke<TagCount[]>("top_tags", { limit }),
+
+  activityTimeline: (days = 30) =>
+    invoke<DayCount[]>("activity_timeline", { days }),
 };

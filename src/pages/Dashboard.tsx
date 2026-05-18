@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { GlassCard } from "@/components/GlassCard";
 import { ExtDistChart } from "@/components/ExtDistChart";
+import { ActivityChart } from "@/components/ActivityChart";
+import { TopTagsCard } from "@/components/TopTagsCard";
 import { ScanCard } from "@/components/ScanCard";
 import { api } from "@/lib/api";
 import type { DashboardStats, Project } from "@/lib/types";
@@ -147,7 +149,11 @@ export function Dashboard() {
             </div>
           </GlassCard>
 
-          <GlassCard className="col-span-12 md:col-span-2 p-5 relative overflow-hidden">
+          <GlassCard
+            interactive
+            onClick={() => nav("/files?tag=临时")}
+            className="col-span-12 md:col-span-2 p-5 relative overflow-hidden"
+          >
             <div className="relative h-full flex flex-col">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20 flex items-center justify-center">
@@ -160,10 +166,20 @@ export function Dashboard() {
               <div className="text-[12px] text-[var(--color-text-secondary)] mt-1">
                 重复
               </div>
-              <div className="mt-auto text-[11px] font-mono text-[var(--color-text-tertiary)]">
+              <div className="mt-auto text-[11px] font-mono text-[var(--color-text-tertiary)] flex items-center gap-1">
                 {stats?.duplicate_groups ?? "—"} 组
+                <ArrowRight className="w-3 h-3 ml-auto" />
               </div>
             </div>
+          </GlassCard>
+        </motion.div>
+
+        <motion.div variants={itemVariants} className="grid grid-cols-12 gap-4 auto-rows-[220px]">
+          <GlassCard className="col-span-12 md:col-span-7 p-5 relative overflow-hidden">
+            <ActivityChart days={30} />
+          </GlassCard>
+          <GlassCard className="col-span-12 md:col-span-5 p-5 relative overflow-hidden">
+            <TopTagsCard />
           </GlassCard>
         </motion.div>
 
@@ -239,22 +255,26 @@ export function Dashboard() {
               {
                 label: `${stats?.temp_files_count ?? "—"} 个文件在 Downloads 中超过 180 天未访问`,
                 action: "查看清单",
+                onClick: () => nav("/files?tag=临时"),
                 color: "warning" as const,
               },
               {
                 label: `${stats?.duplicate_groups ?? "—"} 组重复文件占用 ${stats ? formatBytes(stats.duplicate_size) : "—"}`,
                 action: "查看清单",
+                onClick: () => nav("/files"),
                 color: "warning" as const,
               },
               {
                 label: `本月云端 AI 已用 ¥${stats?.ai_used_yuan.toFixed(2) ?? "—"} / ¥${stats?.ai_budget_yuan ?? "—"}`,
-                action: "查看明细",
+                action: "去 Chat",
+                onClick: () => nav("/chat"),
                 color: "info" as const,
               },
             ].map((item, i) => (
-              <div
+              <button
                 key={i}
-                className="flex items-center justify-between px-5 py-3 hover:bg-[var(--color-bg-card-hover)]/30 transition-colors"
+                onClick={item.onClick}
+                className="w-full flex items-center justify-between px-5 py-3 hover:bg-[var(--color-bg-card-hover)]/30 transition-colors text-left"
               >
                 <div className="flex items-center gap-2 text-[13px]">
                   {item.color === "warning" ? (
@@ -264,11 +284,11 @@ export function Dashboard() {
                   )}
                   <span className="text-[var(--color-text-secondary)]">{item.label}</span>
                 </div>
-                <button className="text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] flex items-center gap-1 group">
+                <span className="text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] flex items-center gap-1 group">
                   {item.action}
                   <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
-                </button>
-              </div>
+                </span>
+              </button>
             ))}
           </GlassCard>
         </motion.div>

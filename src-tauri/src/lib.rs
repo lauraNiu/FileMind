@@ -70,6 +70,9 @@ pub fn run() {
             commands::scan_directory,
             commands::clear_all_data,
             commands::enrich_graph,
+            commands::update_file_tags,
+            commands::top_tags,
+            commands::activity_timeline,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
