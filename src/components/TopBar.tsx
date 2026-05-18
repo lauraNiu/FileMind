@@ -6,7 +6,11 @@ import { PortalPopover } from "./PortalPopover";
 import { api } from "@/lib/api";
 import type { AppConfig } from "@/lib/types";
 
-export function TopBar() {
+interface TopBarProps {
+  onOpenCommandPalette?: () => void;
+}
+
+export function TopBar({ onOpenCommandPalette }: TopBarProps = {}) {
   const nav = useNavigate();
   const [openSettings, setOpenSettings] = useState(false);
   const [openUser, setOpenUser] = useState(false);
@@ -22,7 +26,7 @@ export function TopBar() {
     <header className="h-14 flex items-center px-5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)]/50 backdrop-blur-md">
       <div className="flex-1 max-w-[560px] mx-auto">
         <button
-          onClick={() => nav("/files")}
+          onClick={() => onOpenCommandPalette?.() ?? nav("/files")}
           className="group w-full h-9 flex items-center gap-2 px-3 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] transition-colors text-left"
         >
           <Search className="w-[14px] h-[14px] text-[var(--color-text-tertiary)] group-hover:text-[var(--color-text-secondary)]" />
@@ -30,7 +34,7 @@ export function TopBar() {
             搜索或问任何问题...
           </span>
           <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] text-[var(--color-text-tertiary)] font-mono">
-            ⌘K
+            ⌘P
           </kbd>
         </button>
       </div>

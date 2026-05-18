@@ -211,3 +211,55 @@ export interface BatchSummaryProgress {
   total: number;
   file_name: string;
 }
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  message_count: number;
+}
+
+export interface PersistedChatMessage {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  file_ids: string[] | null;
+  reasoning: string | null;
+  created_at: number;
+}
+
+export interface AiUsageEntry {
+  id: string;
+  model: string;
+  purpose: string;
+  cost_yuan: number;
+  success: boolean;
+  created_at: number;
+}
+
+export interface AiUsageByGroup {
+  key: string;
+  count: number;
+  cost: number;
+}
+
+export interface AiUsageStats {
+  total_calls: number;
+  success_calls: number;
+  total_cost: number;
+  by_model: AiUsageByGroup[];
+  by_purpose: AiUsageByGroup[];
+}
+
+export interface SemanticHit {
+  file: FileItem;
+  score: number;
+}
+
+export interface EmbeddingProgress {
+  current: number;
+  total: number;
+  file_name: string;
+}

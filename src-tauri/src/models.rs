@@ -202,3 +202,79 @@ pub struct WatchedRoot {
     pub project_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSession {
+    pub id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub message_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedChatMessage {
+    pub id: String,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub file_ids: Option<Vec<String>>,
+    pub reasoning: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsageEntry {
+    pub id: String,
+    pub model: String,
+    pub purpose: String,
+    pub cost_yuan: f64,
+    pub success: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsageByGroup {
+    pub key: String,
+    pub count: i64,
+    pub cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsageStats {
+    pub total_calls: i64,
+    pub success_calls: i64,
+    pub total_cost: f64,
+    pub by_model: Vec<AiUsageByGroup>,
+    pub by_purpose: Vec<AiUsageByGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportRelation {
+    pub src: String,
+    pub dst: String,
+    pub relation: String,
+    pub weight: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportData {
+    pub version: i32,
+    pub exported_at: i64,
+    pub projects: Vec<Project>,
+    pub files: Vec<FileItem>,
+    pub relations: Vec<ExportRelation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticHit {
+    pub file: FileItem,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingProgress {
+    pub current: i64,
+    pub total: i64,
+    pub file_name: String,
+}
+

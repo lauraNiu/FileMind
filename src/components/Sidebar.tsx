@@ -10,6 +10,9 @@ import {
   Sparkles,
   Settings as SettingsIcon,
   History as HistoryIcon,
+  PieChart,
+  Copy as CopyIcon,
+  Hourglass,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -25,9 +28,10 @@ const navItems = [
 ];
 
 const utilItems = [
-  { to: "/duplicates", label: "重复清理", icon: Files },
-  { to: "/temp", label: "临时文件", icon: Clock },
+  { to: "/duplicates", label: "重复清理", icon: CopyIcon },
+  { to: "/temp", label: "临时文件", icon: Hourglass },
   { to: "/history", label: "操作历史", icon: HistoryIcon },
+  { to: "/usage", label: "AI 用量", icon: PieChart },
   { to: "/settings", label: "设置", icon: SettingsIcon },
 ];
 

@@ -59,6 +59,45 @@ body {
     var(--color-bg-base);
 }
 
+[data-theme="light"] {
+  --color-bg-base: #f7f8fa;
+  --color-bg-elevated: #ffffff;
+  --color-bg-card: #f0f1f5;
+  --color-bg-card-hover: #e7e9ef;
+  --color-border-subtle: #e2e5ec;
+  --color-border-default: #cdd1db;
+  --color-border-strong: #a8aebc;
+  --color-text-primary: #1a1d21;
+  --color-text-secondary: #4a5060;
+  --color-text-tertiary: #6c7088;
+  --color-text-muted: #a0a5b8;
+}
+
+[data-theme="light"] body {
+  background:
+    radial-gradient(ellipse at top left, rgba(34, 197, 94, 0.08), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(167, 139, 250, 0.07), transparent 60%),
+    var(--color-bg-base);
+}
+
+[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--color-border-subtle);
+}
+
+[data-theme="light"] .glass-strong {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--color-border-default);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

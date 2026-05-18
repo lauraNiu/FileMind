@@ -7,6 +7,7 @@ use tauri::Emitter;
 use crate::models::{ChatTurn, FileItem};
 
 const ZHIPU_ENDPOINT: &str = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+const ZHIPU_EMBED_ENDPOINT: &str = "https://open.bigmodel.cn/api/paas/v4/embeddings";
 
 pub struct ZhipuClient {
     api_key: String,
@@ -62,6 +63,58 @@ impl ZhipuClient {
         let user = format!("文件名：{}\n已知信息：{}", name, content_hint);
         let resp = self.chat_simple(system, &user).await?;
         Ok(resp.trim().to_string())
+    }
+
+    pub async fn suggest_rename(&self, name: &str, content_hint: &str) -> Result<Vec<String>> {
+        let system = "你是文件命名助手。基于文件原名和已知信息，给出 3 个更清晰、更可读的中文文件名建议。
+要求：
+- 保留原扩展名
+- 长度 < 40 字符
+- 不含 / \\ : * ? \" < > |
+- 输出格式：每行一个文件名，不要前缀、不要序号、不要解释
+- 优先体现：项目名/客户/时间/版本/用途";
+        let user = format!("原文件名：{}\n已知信息：{}\n\n请输出 3 个建议（每行一个）：", name, content_hint);
+        let resp = self.chat_simple(system, &user).await?;
+        let suggestions: Vec<String> = resp
+            .lines()
+            .map(|l| l.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')' || c == '、' || c == ' ').to_string())
+            .filter(|s| !s.is_empty() && !s.contains('/') && !s.contains('\\'))
+            .take(3)
+            .collect();
+        Ok(suggestions)
+    }
+
+    pub async fn embed(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        let body = json!({
+            "model": "embedding-3",
+            "input": texts,
+        });
+        let resp = self
+            .http
+            .post(ZHIPU_EMBED_ENDPOINT)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP {}: {}", status, text);
+        }
+        let parsed: EmbeddingResp = resp.json().await?;
+        let mut out: Vec<Vec<f32>> = parsed
+            .data
+            .into_iter()
+            .map(|d| d.embedding)
+            .collect();
+        if out.is_empty() {
+            anyhow::bail!("空 embedding 响应");
+        }
+        Ok(std::mem::take(&mut out))
+    }
+
+    pub fn current_model(&self) -> &str {
+        &self.model
     }
 
     pub async fn answer_question(
@@ -410,6 +463,16 @@ fn strip_file_markers(s: &str) -> String {
         .join(" ")
         .trim()
         .to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingResp {
+    data: Vec<EmbeddingData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingData {
+    embedding: Vec<f32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

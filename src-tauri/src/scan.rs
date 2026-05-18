@@ -1,6 +1,8 @@
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -177,6 +179,11 @@ pub async fn scan_directory(
 
         if db.insert_file(&file, false).is_ok() {
             indexed += 1;
+            if size <= 50_000_000 {
+                if let Ok(h) = sha256_of(path) {
+                    let _ = db.update_file_hash(&id, &h);
+                }
+            }
         } else {
             skipped += 1;
         }
@@ -213,6 +220,10 @@ pub async fn scan_directory(
 
     if let Err(e) = derive_relations(&db, &project_id) {
         eprintln!("[scan] relation derivation failed: {}", e);
+    }
+
+    if let Err(e) = derive_markdown_refs(&db, &project_id) {
+        eprintln!("[scan] markdown ref derivation failed: {}", e);
     }
 
     let _ = app.emit(
@@ -420,6 +431,113 @@ fn file_stem(name: &str) -> String {
 
     let s = s.trim_end_matches(|c: char| matches!(c, '_' | '-' | '.' | ' '));
     s.to_string()
+}
+
+fn sha256_of(path: &Path) -> Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn derive_markdown_refs(db: &Db, project_id: &str) -> Result<usize> {
+    let files = db.project_files(project_id)?;
+    let by_path: std::collections::HashMap<String, &FileItem> = files
+        .iter()
+        .map(|f| (f.path.clone(), f))
+        .collect();
+    let mut added = 0usize;
+
+    for f in &files {
+        if !matches!(f.ext.as_str(), "md" | "markdown" | "mdx") {
+            continue;
+        }
+        if f.size > 1_000_000 {
+            continue;
+        }
+        let path = std::path::Path::new(&f.path);
+        let parent = path.parent();
+        let Ok(text) = std::fs::read_to_string(path) else { continue };
+
+        for capture in extract_md_refs(&text) {
+            let resolved = if capture.starts_with('/') {
+                Some(std::path::PathBuf::from(&capture))
+            } else if let Some(p) = parent {
+                Some(p.join(&capture))
+            } else {
+                None
+            };
+            let Some(resolved_path) = resolved else { continue };
+            let canonical = std::fs::canonicalize(&resolved_path)
+                .unwrap_or(resolved_path);
+            let key = canonical.to_string_lossy().to_string();
+            if let Some(target) = by_path.get(&key) {
+                if target.id != f.id {
+                    if db.insert_relation(&f.id, &target.id, "reference", 0.9).is_ok() {
+                        added += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(added)
+}
+
+fn extract_md_refs(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'!' && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            if let Some(end_alt) = find_byte(&bytes[i..], b']') {
+                let after = i + end_alt + 1;
+                if after < bytes.len() && bytes[after] == b'(' {
+                    if let Some(end_url) = find_byte(&bytes[after..], b')') {
+                        let url_bytes = &bytes[after + 1..after + end_url];
+                        if let Ok(url) = std::str::from_utf8(url_bytes) {
+                            let clean = url.split_whitespace().next().unwrap_or("");
+                            if !clean.is_empty() && !clean.starts_with("http") {
+                                out.push(clean.to_string());
+                            }
+                        }
+                        i = after + end_url + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        if bytes[i] == b'[' {
+            if let Some(end_label) = find_byte(&bytes[i..], b']') {
+                let after = i + end_label + 1;
+                if after < bytes.len() && bytes[after] == b'(' {
+                    if let Some(end_url) = find_byte(&bytes[after..], b')') {
+                        let url_bytes = &bytes[after + 1..after + end_url];
+                        if let Ok(url) = std::str::from_utf8(url_bytes) {
+                            let clean = url.split_whitespace().next().unwrap_or("");
+                            if !clean.is_empty() && !clean.starts_with("http") && !clean.starts_with('#') {
+                                out.push(clean.to_string());
+                            }
+                        }
+                        i = after + end_url + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn find_byte(haystack: &[u8], needle: u8) -> Option<usize> {
+    haystack.iter().position(|&b| b == needle)
 }
 
 pub fn derive_relations_global(db: &Db, max_files: usize) -> Result<usize> {

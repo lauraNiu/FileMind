@@ -86,6 +86,47 @@ impl Db {
 
             CREATE INDEX IF NOT EXISTS idx_operations_created ON operations(created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                message_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                file_ids TEXT,
+                reasoning TEXT,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS ai_usage_log (
+                id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                cost_yuan REAL NOT NULL DEFAULT 0,
+                success INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_log(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS embeddings (
+                file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                vector BLOB NOT NULL,
+                dim INTEGER NOT NULL,
+                model TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
             CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
                 name,
                 summary,
@@ -625,6 +666,320 @@ impl Db {
         ).ok();
         conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    pub fn update_file_hash(&self, id: &str, hash: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE files SET content_hash = ?1 WHERE id = ?2",
+            params![hash, id],
+        )?;
+        Ok(())
+    }
+
+    // ============= Chat sessions =============
+
+    pub fn create_chat_session(&self, id: &str, title: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO chat_sessions (id, title, created_at, updated_at, message_count)
+             VALUES (?1, ?2, ?3, ?3, 0)",
+            params![id, title, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_chat_sessions(&self, limit: i64) -> Result<Vec<ChatSession>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, created_at, updated_at, message_count
+             FROM chat_sessions ORDER BY updated_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok(ChatSession {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    message_count: row.get(4)?,
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn delete_chat_session(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM chat_messages WHERE session_id = ?1", params![id])?;
+        conn.execute("DELETE FROM chat_sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn rename_chat_session(&self, id: &str, title: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE chat_sessions SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_chat_message(&self, msg: &PersistedChatMessage) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let file_ids = msg.file_ids.as_ref().map(|v| v.join(","));
+        conn.execute(
+            "INSERT OR REPLACE INTO chat_messages
+             (id, session_id, role, content, file_ids, reasoning, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                msg.id,
+                msg.session_id,
+                msg.role,
+                msg.content,
+                file_ids,
+                msg.reasoning,
+                msg.created_at
+            ],
+        )?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at = ?1,
+             message_count = (SELECT COUNT(*) FROM chat_messages WHERE session_id = ?2)
+             WHERE id = ?2",
+            params![now, msg.session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_chat_messages(&self, session_id: &str) -> Result<Vec<PersistedChatMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, role, content, file_ids, reasoning, created_at
+             FROM chat_messages WHERE session_id = ?1 ORDER BY created_at",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let file_ids: Option<String> = row.get(4)?;
+                Ok(PersistedChatMessage {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    file_ids: file_ids
+                        .map(|s| s.split(',').filter(|x| !x.is_empty()).map(String::from).collect()),
+                    reasoning: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    // ============= AI usage log =============
+
+    pub fn log_ai_usage(&self, model: &str, purpose: &str, cost: f64, success: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let id = format!("u_{}", now);
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO ai_usage_log (id, model, purpose, cost_yuan, success, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, model, purpose, cost, success as i64, now],
+        );
+        Ok(())
+    }
+
+    pub fn list_ai_usage(&self, limit: i64) -> Result<Vec<AiUsageEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, model, purpose, cost_yuan, success, created_at
+             FROM ai_usage_log ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                let s: i64 = row.get(4)?;
+                Ok(AiUsageEntry {
+                    id: row.get(0)?,
+                    model: row.get(1)?,
+                    purpose: row.get(2)?,
+                    cost_yuan: row.get(3)?,
+                    success: s != 0,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn ai_usage_stats(&self, days: i64) -> Result<AiUsageStats> {
+        let conn = self.conn.lock().unwrap();
+        let since = chrono::Utc::now().timestamp() - days * 86400;
+        let (total_calls, total_cost, success): (i64, f64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(cost_yuan), 0), COALESCE(SUM(success), 0)
+             FROM ai_usage_log WHERE created_at >= ?1",
+            params![since],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap_or((0, 0.0, 0));
+
+        let mut stmt = conn.prepare(
+            "SELECT model, COUNT(*) as c, COALESCE(SUM(cost_yuan), 0) as s
+             FROM ai_usage_log WHERE created_at >= ?1
+             GROUP BY model ORDER BY s DESC",
+        )?;
+        let by_model: Vec<(String, i64, f64)> = stmt
+            .query_map(params![since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+
+        let mut stmt = conn.prepare(
+            "SELECT purpose, COUNT(*) as c, COALESCE(SUM(cost_yuan), 0) as s
+             FROM ai_usage_log WHERE created_at >= ?1
+             GROUP BY purpose ORDER BY s DESC",
+        )?;
+        let by_purpose: Vec<(String, i64, f64)> = stmt
+            .query_map(params![since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(Result::ok)
+            .collect();
+
+        Ok(AiUsageStats {
+            total_calls,
+            success_calls: success,
+            total_cost,
+            by_model: by_model
+                .into_iter()
+                .map(|(m, c, s)| AiUsageByGroup { key: m, count: c, cost: s })
+                .collect(),
+            by_purpose: by_purpose
+                .into_iter()
+                .map(|(p, c, s)| AiUsageByGroup { key: p, count: c, cost: s })
+                .collect(),
+        })
+    }
+
+    // ============= Embeddings =============
+
+    pub fn save_embedding(&self, file_id: &str, vector: &[f32], model: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
+        conn.execute(
+            "INSERT OR REPLACE INTO embeddings (file_id, vector, dim, model, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![file_id, bytes, vector.len() as i64, model, chrono::Utc::now().timestamp()],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT file_id, vector FROM embeddings")?;
+        let rows: Vec<(String, Vec<f32>)> = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let bytes: Vec<u8> = row.get(1)?;
+                let mut v = Vec::with_capacity(bytes.len() / 4);
+                for chunk in bytes.chunks_exact(4) {
+                    v.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+                }
+                Ok((id, v))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn embeddings_count(&self) -> i64 {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0))
+            .unwrap_or(0)
+    }
+
+    pub fn files_without_embedding(&self, limit: i64) -> Result<Vec<FileItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.name, f.path, f.ext, f.size, f.mtime, f.mime_type,
+                    f.summary, f.tags, f.project_id, p.name, f.access_count
+             FROM files f LEFT JOIN projects p ON f.project_id = p.id
+             LEFT JOIN embeddings e ON e.file_id = f.id
+             WHERE e.file_id IS NULL AND f.is_temp = 0
+             ORDER BY f.mtime DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], file_row)?;
+        rows.collect::<Result<_, _>>().map_err(Into::into)
+    }
+
+    pub fn export_all(&self) -> Result<ExportData> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, description, status, last_active FROM projects")?;
+        let projects: Vec<Project> = stmt
+            .query_map([], |row| {
+                Ok(Project {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    status: row.get(3)?,
+                    last_active: row.get(4)?,
+                    file_count: 0,
+                    total_size: 0,
+                    top_files: vec![],
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.name, f.path, f.ext, f.size, f.mtime, f.mime_type,
+                    f.summary, f.tags, f.project_id, p.name, f.access_count
+             FROM files f LEFT JOIN projects p ON f.project_id = p.id",
+        )?;
+        let files: Vec<FileItem> = stmt.query_map([], file_row)?.filter_map(Result::ok).collect();
+        drop(stmt);
+
+        let mut stmt = conn.prepare("SELECT src_id, dst_id, relation, weight FROM relations")?;
+        let relations: Vec<(String, String, String, f64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .filter_map(Result::ok)
+            .collect();
+
+        Ok(ExportData {
+            version: 1,
+            exported_at: chrono::Utc::now().timestamp(),
+            projects,
+            files,
+            relations: relations
+                .into_iter()
+                .map(|(s, d, r, w)| ExportRelation { src: s, dst: d, relation: r, weight: w })
+                .collect(),
+        })
+    }
+
+    pub fn import_all(&self, data: &ExportData) -> Result<(i64, i64, i64)> {
+        let mut p_count = 0i64;
+        let mut f_count = 0i64;
+        let mut r_count = 0i64;
+        for p in &data.projects {
+            if self.insert_project(p).is_ok() {
+                p_count += 1;
+            }
+        }
+        for f in &data.files {
+            let is_temp = f.tags.iter().any(|t| t == "临时");
+            if self.insert_file(f, is_temp).is_ok() {
+                f_count += 1;
+            }
+        }
+        for r in &data.relations {
+            if self.insert_relation(&r.src, &r.dst, &r.relation, r.weight).is_ok() {
+                r_count += 1;
+            }
+        }
+        Ok((p_count, f_count, r_count))
     }
 
     pub fn clear_all(&self) -> Result<()> {

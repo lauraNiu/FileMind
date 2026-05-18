@@ -21,6 +21,12 @@ import type {
   WatchStatus,
   WatchEventPayload,
   BatchSummaryProgress,
+  AiUsageEntry,
+  AiUsageStats,
+  ChatSession,
+  PersistedChatMessage,
+  SemanticHit,
+  EmbeddingProgress,
 } from "./types";
 
 export const api = {
@@ -191,4 +197,37 @@ export const api = {
     invoke<void>("watcher_remove_root", { path }),
   onFsEvent: (cb: (e: WatchEventPayload) => void) =>
     listen<WatchEventPayload>("fs-event", (event) => cb(event.payload)),
+
+  // AI usage / rename / embedding
+  listAiUsage: (limit = 200) =>
+    invoke<AiUsageEntry[]>("list_ai_usage", { limit }),
+  aiUsageStats: (days = 30) =>
+    invoke<AiUsageStats>("ai_usage_stats", { days }),
+  suggestRename: (id: string) =>
+    invoke<string[]>("suggest_rename", { id }),
+  embedPending: (limit = 30) =>
+    invoke<number>("embed_pending", { limit }),
+  semanticSearch: (query: string, limit = 20) =>
+    invoke<SemanticHit[]>("semantic_search", { query, limit }),
+  onEmbeddingProgress: (cb: (e: EmbeddingProgress) => void) =>
+    listen<EmbeddingProgress>("embedding-progress", (event) => cb(event.payload)),
+
+  // Chat sessions
+  createChatSession: (id: string, title: string) =>
+    invoke<void>("create_chat_session", { id, title }),
+  listChatSessions: (limit = 100) =>
+    invoke<ChatSession[]>("list_chat_sessions", { limit }),
+  deleteChatSession: (id: string) =>
+    invoke<void>("delete_chat_session", { id }),
+  renameChatSession: (id: string, title: string) =>
+    invoke<void>("rename_chat_session", { id, title }),
+  saveChatMessage: (msg: PersistedChatMessage) =>
+    invoke<void>("save_chat_message", { msg }),
+  listChatMessages: (sessionId: string) =>
+    invoke<PersistedChatMessage[]>("list_chat_messages", { sessionId }),
+
+  // Export / Import
+  exportData: (path: string) => invoke<number>("export_data", { path }),
+  importData: (path: string) =>
+    invoke<[number, number, number]>("import_data", { path }),
 };

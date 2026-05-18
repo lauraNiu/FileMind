@@ -17,6 +17,8 @@ import {
   Move,
   Trash2,
   Undo2,
+  Wand2,
+  Check,
 } from "lucide-react";
 import type { FileItem, RelatedFile } from "@/lib/types";
 import { api } from "@/lib/api";
@@ -55,6 +57,8 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged, onFileChanged }
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [renameSuggesting, setRenameSuggesting] = useState(false);
+  const [renameSuggestions, setRenameSuggestions] = useState<string[]>([]);
   const tagInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
@@ -170,10 +174,30 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged, onFileChanged }
       await api.renameFile(file.id, newName, reason);
       toast.success(`已重命名为 ${newName}`);
       setRenaming(false);
+      setRenameSuggestions([]);
       onFileChanged?.();
       onClose();
     } catch (e) {
       toast.error("重命名失败：" + String(e));
+    }
+  };
+
+  const suggestRename = async () => {
+    if (!file) return;
+    setRenameSuggesting(true);
+    setRenameSuggestions([]);
+    try {
+      const s = await api.suggestRename(file.id);
+      if (s.length === 0) {
+        toast.error("AI 没有给出建议");
+      } else {
+        setRenameSuggestions(s);
+        setRenaming(true);
+      }
+    } catch (e) {
+      toast.error("AI 建议失败：" + String(e));
+    } finally {
+      setRenameSuggesting(false);
     }
   };
 
@@ -273,25 +297,56 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged, onFileChanged }
                   </div>
                   <div className="min-w-0 flex-1">
                     {renaming ? (
-                      <div className="flex items-center gap-1">
-                        <input
-                          ref={renameInputRef}
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") doRename();
-                            if (e.key === "Escape") {
-                              setRenaming(false);
-                              setRenameValue(file.name);
-                            }
-                          }}
-                          className="flex-1 px-2 py-1 rounded bg-[var(--color-bg-card)] border border-[var(--color-ai)] text-[14px] font-semibold outline-none"
-                        />
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1">
+                          <input
+                            ref={renameInputRef}
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") doRename();
+                              if (e.key === "Escape") {
+                                setRenaming(false);
+                                setRenameValue(file.name);
+                                setRenameSuggestions([]);
+                              }
+                            }}
+                            className="flex-1 px-2 py-1 rounded bg-[var(--color-bg-card)] border border-[var(--color-ai)] text-[14px] font-semibold outline-none"
+                          />
+                          <button
+                            onClick={doRename}
+                            className="px-2 py-1 rounded bg-[var(--color-accent)] text-black text-[11px] font-medium"
+                          >
+                            保存
+                          </button>
+                        </div>
+                        {renameSuggestions.length > 0 && (
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-tertiary)] font-mono mb-1.5 flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5 text-[var(--color-ai)]" />
+                              AI 建议
+                            </div>
+                            <div className="space-y-1">
+                              {renameSuggestions.map((s, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => setRenameValue(s)}
+                                  className="w-full text-left px-2 py-1.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-ai)]/40 text-[12px] font-mono flex items-center gap-2"
+                                >
+                                  <Check className="w-3 h-3 text-[var(--color-ai)] shrink-0" />
+                                  <span className="truncate">{s}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <button
-                          onClick={doRename}
-                          className="px-2 py-1 rounded bg-[var(--color-accent)] text-black text-[11px] font-medium"
+                          onClick={suggestRename}
+                          disabled={renameSuggesting}
+                          className="text-[11px] text-[var(--color-ai)] hover:underline flex items-center gap-1 disabled:opacity-40"
                         >
-                          保存
+                          <Wand2 className={`w-3 h-3 ${renameSuggesting ? "animate-pulse" : ""}`} />
+                          {renameSuggesting ? "AI 思考中..." : "让 AI 建议改名"}
                         </button>
                       </div>
                     ) : (

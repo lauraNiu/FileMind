@@ -12,7 +12,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use commands::AppState;
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -73,6 +77,76 @@ pub fn run() {
             } else {
                 println!("[watcher] started");
             }
+
+            let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+            let hide = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
+            let dashboard = MenuItem::with_id(app, "dashboard", "仪表盘", true, None::<&str>)?;
+            let chat = MenuItem::with_id(app, "chat", "Chat", true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let quit = MenuItem::with_id(app, "quit", "退出 FileMind", true, None::<&str>)?;
+            let menu = Menu::with_items(
+                app,
+                &[&show, &hide, &sep, &dashboard, &chat, &settings, &sep, &quit],
+            )?;
+
+            let _ = TrayIconBuilder::with_id("filemind-tray")
+                .tooltip("FileMind · 本地文件管家")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .menu_on_left_click(false)
+                .on_menu_event(|app_handle, event| {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        match event.id().as_ref() {
+                            "show" => {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                            "hide" => {
+                                let _ = window.hide();
+                            }
+                            "dashboard" => {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.eval("window.location.hash = '/'; window.location.reload();");
+                            }
+                            "chat" => {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.eval("window.location.hash = '/chat'; window.location.reload();");
+                            }
+                            "settings" => {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                                let _ = window.eval("window.location.hash = '/settings'; window.location.reload();");
+                            }
+                            "quit" => {
+                                app_handle.exit(0);
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app_handle = tray.app_handle();
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -117,6 +191,19 @@ pub fn run() {
             commands::watcher_start,
             commands::watcher_stop,
             commands::watcher_remove_root,
+            commands::list_ai_usage,
+            commands::ai_usage_stats,
+            commands::suggest_rename,
+            commands::embed_pending,
+            commands::semantic_search,
+            commands::create_chat_session,
+            commands::list_chat_sessions,
+            commands::delete_chat_session,
+            commands::rename_chat_session,
+            commands::save_chat_message,
+            commands::list_chat_messages,
+            commands::export_data,
+            commands::import_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -13,6 +13,7 @@ import { History } from "./pages/History";
 import { Timeline } from "./pages/Timeline";
 import { Duplicates } from "./pages/Duplicates";
 import { TempFiles } from "./pages/TempFiles";
+import { Usage } from "./pages/Usage";
 import { api } from "./lib/api";
 import { Sparkles } from "lucide-react";
 
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="timeline" element={<Timeline />} />
           <Route path="duplicates" element={<Duplicates />} />
           <Route path="temp" element={<TempFiles />} />
+          <Route path="usage" element={<Usage />} />
           <Route path="settings" element={<Settings />} />
           <Route path="history" element={<History />} />
         </Route>

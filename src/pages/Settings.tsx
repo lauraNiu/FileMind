@@ -14,6 +14,13 @@ import {
   Loader2,
   Plus,
   X,
+  Palette,
+  Download,
+  Upload,
+  Wand2,
+  Sun,
+  Moon,
+  Monitor,
 } from "lucide-react";
 import { toast } from "sonner";
 import { GlassCard } from "@/components/GlassCard";
@@ -21,14 +28,16 @@ import { api } from "@/lib/api";
 import { MODELS } from "@/lib/models";
 import type { AppConfig } from "@/lib/types";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
+import { getTheme, setTheme, type Theme } from "@/lib/theme";
 
-type Section = "profile" | "ai" | "scan" | "privacy" | "data" | "about";
+type Section = "profile" | "ai" | "scan" | "privacy" | "data" | "appearance" | "about";
 
 const SECTIONS: { key: Section; label: string; icon: typeof UserIcon }[] = [
   { key: "profile", label: "个人资料", icon: UserIcon },
   { key: "ai", label: "AI & 模型", icon: Sparkles },
   { key: "scan", label: "扫描", icon: Folder },
   { key: "privacy", label: "隐私 & 敏感目录", icon: ShieldCheck },
+  { key: "appearance", label: "外观主题", icon: Palette },
   { key: "data", label: "数据管理", icon: Trash2 },
   { key: "about", label: "关于", icon: Sparkles },
 ];
@@ -47,6 +56,8 @@ export function Settings() {
   const [maxFiles, setMaxFiles] = useState(5000);
   const [newExcluded, setNewExcluded] = useState("");
   const [testing, setTesting] = useState(false);
+  const [theme, setThemeState] = useState<Theme>(() => getTheme());
+  const [embedding, setEmbedding] = useState(false);
 
   const reload = () => {
     api.getConfig().then((c) => {
@@ -130,6 +141,49 @@ export function Settings() {
       setTimeout(() => nav("/welcome"), 400);
     } catch (e) {
       toast.error(String(e));
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const p = await dialogOpen({
+        directory: false,
+        save: true as never,
+        defaultPath: `filemind-export-${new Date().toISOString().slice(0, 10)}.json`,
+      } as never).catch(() => null);
+      if (!p || typeof p !== "string") return;
+      const bytes = await api.exportData(p);
+      toast.success(`已导出 ${Math.round(bytes / 1024)} KB → ${p}`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      const p = await dialogOpen({
+        directory: false,
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!p || typeof p !== "string") return;
+      if (!window.confirm("从 JSON 导入索引数据？\n（会与现有数据合并，不会动你的真实文件）")) return;
+      const [pc, fc, rc] = await api.importData(p);
+      toast.success(`导入完成：${pc} 项目 / ${fc} 文件 / ${rc} 关系`);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const runEmbedding = async () => {
+    setEmbedding(true);
+    try {
+      const n = await api.embedPending(30);
+      toast.success(`生成 ${n} 个嵌入向量 · 现在可以做语义搜索了`);
+    } catch (e) {
+      toast.error("失败：" + String(e));
+    } finally {
+      setEmbedding(false);
     }
   };
 
@@ -289,7 +343,7 @@ export function Settings() {
                 </button>
               </GlassCard>
 
-              <GlassCard className="p-6">
+              <GlassCard className="p-6 mb-4">
                 <h2 className="text-[15px] font-display font-semibold mb-4">月预算</h2>
                 <div className="flex items-center gap-3">
                   <span className="text-[14px] text-[var(--color-text-secondary)]">¥</span>
@@ -311,6 +365,69 @@ export function Settings() {
                 </div>
                 <div className="text-[11px] text-[var(--color-text-tertiary)] font-mono mt-2">
                   超出后降级到本地模型（即将上线）
+                </div>
+              </GlassCard>
+
+              <GlassCard className="p-6">
+                <h2 className="text-[15px] font-display font-semibold mb-2 flex items-center gap-2">
+                  <Wand2 className="w-4 h-4 text-[var(--color-ai)]" />
+                  语义搜索 · 向量嵌入
+                </h2>
+                <p className="text-[12px] text-[var(--color-text-secondary)] mb-4">
+                  调用 Zhipu embedding-3 把文件名 + 摘要 + 标签嵌入为向量，
+                  让搜索能理解"客户提案"这类语义概念。
+                </p>
+                <button
+                  onClick={runEmbedding}
+                  disabled={embedding}
+                  className="px-4 py-2 rounded-md bg-[var(--color-ai)]/10 border border-[var(--color-ai)]/40 text-[var(--color-ai)] text-[12.5px] font-medium hover:bg-[var(--color-ai)]/20 flex items-center gap-2 disabled:opacity-40"
+                >
+                  {embedding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {embedding ? "生成中..." : "生成 30 个嵌入向量"}
+                </button>
+              </GlassCard>
+            </motion.div>
+          )}
+
+          {section === "appearance" && (
+            <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}>
+              <GlassCard className="p-6">
+                <h2 className="text-[15px] font-display font-semibold mb-4">主题</h2>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { value: "dark" as Theme, label: "深色", icon: Moon },
+                    { value: "light" as Theme, label: "浅色", icon: Sun },
+                    { value: "system" as Theme, label: "跟随系统", icon: Monitor },
+                  ].map((t) => {
+                    const Icon = t.icon;
+                    const active = theme === t.value;
+                    return (
+                      <button
+                        key={t.value}
+                        onClick={() => {
+                          setTheme(t.value);
+                          setThemeState(t.value);
+                          toast.success(`已切换：${t.label}`);
+                        }}
+                        className={`p-4 rounded-lg border flex flex-col items-center gap-2 transition-colors ${
+                          active
+                            ? "bg-[var(--color-ai)]/10 border-[var(--color-ai)]/40 text-[var(--color-text-primary)]"
+                            : "bg-[var(--color-bg-card)] border-[var(--color-border-subtle)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-default)]"
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="text-[13px] font-medium">{t.label}</span>
+                        {active && (
+                          <span className="text-[10px] font-mono text-[var(--color-accent)]">
+                            当前
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[11px] text-[var(--color-text-tertiary)] font-mono mt-4">
+                  设置保存到 localStorage · 跨重启保留
                 </div>
               </GlassCard>
             </motion.div>
@@ -436,6 +553,30 @@ export function Settings() {
 
           {section === "data" && (
             <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              <GlassCard className="p-6">
+                <h2 className="text-[15px] font-display font-semibold mb-2">导出 / 导入</h2>
+                <p className="text-[12px] text-[var(--color-text-secondary)] mb-4">
+                  把当前索引（项目 / 文件元信息 / 关系）导出为 JSON 备份，
+                  也可从他人或备份的 JSON 文件导入到本地索引。
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleExport}
+                    className="px-4 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-default)] text-[12.5px] hover:bg-[var(--color-bg-card-hover)] flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    导出为 JSON
+                  </button>
+                  <button
+                    onClick={handleImport}
+                    className="px-4 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-default)] text-[12.5px] hover:bg-[var(--color-bg-card-hover)] flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    从 JSON 导入
+                  </button>
+                </div>
+              </GlassCard>
+
               <GlassCard className="p-6">
                 <h2 className="text-[15px] font-display font-semibold mb-2">清空索引</h2>
                 <p className="text-[12px] text-[var(--color-text-secondary)] mb-4">

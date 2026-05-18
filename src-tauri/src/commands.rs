@@ -200,10 +200,13 @@ pub async fn chat_message_stream(
 ) -> Result<ChatResponse, String> {
     let ai = state.build_ai()?;
     let candidates = collect_candidates(&state.db, &message)?;
-    let (content, reasoning, file_ids) = ai
+    let used_model = model.clone().unwrap_or_else(|| ai.current_model().to_string());
+    let result = ai
         .answer_question_stream(app, stream_id, &message, &history, &candidates, model.as_deref())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string());
+    state.db.log_ai_usage(&used_model, "chat", 0.01, result.is_ok()).ok();
+    let (content, reasoning, file_ids) = result?;
     state.db.add_ai_cost(0.01).ok();
     Ok(ChatResponse {
         content,
@@ -539,6 +542,207 @@ pub fn list_operations(
     limit: Option<i64>,
 ) -> Result<Vec<OperationRecord>, String> {
     state.db.list_operations(limit.unwrap_or(100)).map_err(|e| e.to_string())
+}
+
+// ============================ AI usage / rename / embedding ============================
+
+#[tauri::command]
+pub fn list_ai_usage(state: State<AppState>, limit: Option<i64>) -> Result<Vec<AiUsageEntry>, String> {
+    state.db.list_ai_usage(limit.unwrap_or(200)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn ai_usage_stats(state: State<AppState>, days: Option<i64>) -> Result<AiUsageStats, String> {
+    state.db.ai_usage_stats(days.unwrap_or(30)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn suggest_rename(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<String>, String> {
+    let ai = state.build_ai()?;
+    let f = state.db.get_file(&id).map_err(|e| e.to_string())?;
+    let hint = format!(
+        "类型: {} | 项目: {} | 标签: {} | 摘要: {}",
+        f.mime_type,
+        f.project_name.unwrap_or_else(|| "无".to_string()),
+        f.tags.join(", "),
+        f.summary.unwrap_or_else(|| "无".to_string()),
+    );
+    let suggestions = ai.suggest_rename(&f.name, &hint).await.map_err(|e| e.to_string())?;
+    let model = ai.current_model().to_string();
+    state.db.log_ai_usage(&model, "rename", 0.001, true).ok();
+    state.db.add_ai_cost(0.001).ok();
+    Ok(suggestions)
+}
+
+#[tauri::command]
+pub async fn embed_pending(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<i64, String> {
+    let take = limit.unwrap_or(30).min(50);
+    let ai = state.build_ai()?;
+    let pending = state
+        .db
+        .files_without_embedding(take)
+        .map_err(|e| e.to_string())?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let texts: Vec<String> = pending
+        .iter()
+        .map(|f| format!("{} {} {}", f.name, f.summary.clone().unwrap_or_default(), f.tags.join(" ")))
+        .collect();
+
+    let mut total = 0i64;
+    let batch_size = 5;
+    let total_batches = (pending.len() + batch_size - 1) / batch_size;
+    for (batch_idx, chunk_pair) in pending.chunks(batch_size).zip(texts.chunks(batch_size)).enumerate() {
+        let (files_chunk, texts_chunk) = chunk_pair;
+        let _ = app.emit(
+            "embedding-progress",
+            EmbeddingProgress {
+                current: (batch_idx + 1) as i64,
+                total: total_batches as i64,
+                file_name: files_chunk.first().map(|f| f.name.clone()).unwrap_or_default(),
+            },
+        );
+        match ai.embed(texts_chunk.to_vec()).await {
+            Ok(vecs) => {
+                for (f, v) in files_chunk.iter().zip(vecs.iter()) {
+                    if state.db.save_embedding(&f.id, v, "embedding-3").is_ok() {
+                        total += 1;
+                    }
+                }
+                state.db.log_ai_usage("embedding-3", "embed", 0.002 * texts_chunk.len() as f64, true).ok();
+            }
+            Err(e) => {
+                eprintln!("[embed] batch failed: {}", e);
+                state.db.log_ai_usage("embedding-3", "embed", 0.0, false).ok();
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    Ok(total)
+}
+
+#[tauri::command]
+pub async fn semantic_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<SemanticHit>, String> {
+    let count = state.db.embeddings_count();
+    if count == 0 {
+        return Err("还没有嵌入向量，先到设置或仪表盘批量生成".into());
+    }
+    let ai = state.build_ai()?;
+    let q_vec = ai.embed(vec![query.clone()]).await.map_err(|e| e.to_string())?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "embedding 空响应".to_string())?;
+
+    let all = state.db.list_embeddings().map_err(|e| e.to_string())?;
+    let mut scored: Vec<(String, f64)> = all
+        .into_iter()
+        .map(|(id, v)| {
+            let score = cosine(&q_vec, &v);
+            (id, score)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let top = scored.into_iter().take(limit.unwrap_or(20) as usize);
+
+    let mut hits = Vec::new();
+    for (id, score) in top {
+        if let Ok(file) = state.db.get_file(&id) {
+            hits.push(SemanticHit { file, score });
+        }
+    }
+    Ok(hits)
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    (dot / (na * nb)) as f64
+}
+
+// ============================ Chat sessions ============================
+
+#[tauri::command]
+pub fn create_chat_session(
+    state: State<AppState>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    state.db.create_chat_session(&id, &title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_chat_sessions(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<ChatSession>, String> {
+    state.db.list_chat_sessions(limit.unwrap_or(100)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_chat_session(state: State<AppState>, id: String) -> Result<(), String> {
+    state.db.delete_chat_session(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_chat_session(
+    state: State<AppState>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    state.db.rename_chat_session(&id, &title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_chat_message(
+    state: State<AppState>,
+    msg: PersistedChatMessage,
+) -> Result<(), String> {
+    state.db.save_chat_message(&msg).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_chat_messages(
+    state: State<AppState>,
+    session_id: String,
+) -> Result<Vec<PersistedChatMessage>, String> {
+    state.db.list_chat_messages(&session_id).map_err(|e| e.to_string())
+}
+
+// ============================ Export / Import ============================
+
+#[tauri::command]
+pub fn export_data(state: State<AppState>, path: String) -> Result<i64, String> {
+    let data = state.db.export_all().map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    let bytes_written = json.len() as i64;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(bytes_written)
+}
+
+#[tauri::command]
+pub fn import_data(state: State<AppState>, path: String) -> Result<(i64, i64, i64), String> {
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let data: ExportData = serde_json::from_str(&text).map_err(|e| format!("解析失败: {}", e))?;
+    state.db.import_all(&data).map_err(|e| e.to_string())
 }
 
 // ============================ Watcher ============================
