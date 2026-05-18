@@ -116,3 +116,11 @@ pub struct ScanResult {
     pub project_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichResult {
+    pub analyzed: i64,
+    pub heuristic_added: i64,
+    pub ai_added: i64,
+    pub ai_skipped: i64,
+}
+

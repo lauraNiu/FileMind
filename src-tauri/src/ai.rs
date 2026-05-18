@@ -175,6 +175,92 @@ impl ZhipuClient {
         Ok((cleaned, reasoning, file_ids))
     }
 
+    pub async fn suggest_relations(&self, files: &[FileItem]) -> Result<Vec<SuggestedRelation>> {
+        if files.is_empty() {
+            return Ok(vec![]);
+        }
+        let max = 40usize.min(files.len());
+        let sample = &files[..max];
+
+        let file_lines: Vec<String> = sample
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                format!(
+                    "{}. [{}] {} | 项目: {} | 类型: {} | 标签: [{}] | 摘要: {}",
+                    i + 1,
+                    f.id,
+                    f.name,
+                    f.project_name.as_deref().unwrap_or("无"),
+                    f.ext,
+                    f.tags.join(", "),
+                    f.summary.as_deref().unwrap_or("无")
+                )
+            })
+            .collect();
+
+        let system = r#"你是文件关系分析助手。基于一批文件的元信息，找出**强相关**的文件对，标注关系类型。
+
+关系类型（必须用这 4 种之一）：
+- "reference"：A 引用 / 链接 / 截图了 B
+- "derived"：A 是 B 的版本 / 副本 / 导出（如 v3 derived from v2）
+- "co-project"：A 和 B 同属一个工作主题（不只是同目录，要内容相关）
+- "similar"：内容主题相似但非派生关系
+
+规则：
+1. 只输出**高置信度**关系（信心 > 0.6）
+2. 不要乱配，宁可少不要多
+3. 不要把"刚好同目录"算 co-project（那个本系统已自动算了）
+4. 重点找：跨目录的同主题、不同格式的派生（如 .docx 和 .pdf）、版本族、引用链
+
+输出格式：严格 JSON 数组，每项 `{"src": "文件ID", "dst": "文件ID", "rel": "类型", "conf": 0.0-1.0, "why": "一句话原因"}`。
+- 不要任何前后缀文字，直接 JSON
+- 最多 20 对
+- src 和 dst 必须来自候选清单的方括号 ID
+- 不允许自连（src != dst）"#;
+
+        let user = format!(
+            "候选文件（{}）：\n{}\n\n请输出 JSON 关系数组。",
+            sample.len(),
+            file_lines.join("\n")
+        );
+
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user }
+            ],
+            "temperature": 0.2,
+            "max_tokens": 1500,
+            "response_format": { "type": "json_object" }
+        });
+
+        let resp: ChatCompletionResp = self
+            .http
+            .post(ZHIPU_ENDPOINT)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        let content = resp
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .unwrap_or_default();
+
+        let valid_ids: std::collections::HashSet<&str> =
+            files.iter().map(|f| f.id.as_str()).collect();
+
+        let parsed = parse_relations_json(&content, &valid_ids);
+        Ok(parsed)
+    }
+
     async fn chat_simple(&self, system: &str, user: &str) -> Result<String> {
         let body = json!({
             "model": self.model,
@@ -310,6 +396,77 @@ struct ChatMessage {
     #[allow(dead_code)]
     role: String,
     content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestedRelation {
+    pub src: String,
+    pub dst: String,
+    pub rel: String,
+    pub conf: f64,
+    pub why: String,
+}
+
+fn parse_relations_json(content: &str, valid_ids: &std::collections::HashSet<&str>) -> Vec<SuggestedRelation> {
+    let mut out = Vec::new();
+    let allowed_rels = ["reference", "derived", "co-project", "similar"];
+
+    let candidates: Vec<serde_json::Value> = if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(content) {
+        arr
+    } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(content) {
+        if let Some(arr) = obj.get("relations").and_then(|v| v.as_array()) {
+            arr.clone()
+        } else if let Some(arr) = obj.as_array() {
+            arr.clone()
+        } else if obj.is_object() {
+            obj.as_object()
+                .map(|m| m.values().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        } else {
+            return out;
+        }
+    } else {
+        if let Some(start) = content.find('[') {
+            if let Some(end) = content.rfind(']') {
+                if end > start {
+                    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&content[start..=end]) {
+                        arr
+                    } else {
+                        return out;
+                    }
+                } else {
+                    return out;
+                }
+            } else {
+                return out;
+            }
+        } else {
+            return out;
+        }
+    };
+
+    for v in candidates {
+        let Some(src) = v.get("src").and_then(|x| x.as_str()) else { continue };
+        let Some(dst) = v.get("dst").and_then(|x| x.as_str()) else { continue };
+        let Some(rel) = v.get("rel").and_then(|x| x.as_str()) else { continue };
+        let conf = v.get("conf").and_then(|x| x.as_f64()).unwrap_or(0.7);
+        let why = v.get("why").and_then(|x| x.as_str()).unwrap_or("").to_string();
+
+        if src == dst { continue; }
+        if !valid_ids.contains(src) || !valid_ids.contains(dst) { continue; }
+        if !allowed_rels.contains(&rel) { continue; }
+        if conf < 0.55 { continue; }
+
+        out.push(SuggestedRelation {
+            src: src.to_string(),
+            dst: dst.to_string(),
+            rel: rel.to_string(),
+            conf,
+            why,
+        });
+    }
+    out.truncate(20);
+    out
 }
 
 #[derive(Debug, Deserialize)]

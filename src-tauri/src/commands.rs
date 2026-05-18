@@ -163,6 +163,63 @@ pub fn clear_all_data(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn enrich_graph(
+    state: State<'_, AppState>,
+    use_ai: bool,
+    max_files: Option<i64>,
+) -> Result<EnrichResult, String> {
+    let limit = max_files.unwrap_or(60) as usize;
+
+    let heuristic_added = scan::derive_relations_global(&state.db, limit)
+        .map_err(|e| e.to_string())?;
+
+    let mut ai_added = 0i64;
+    let mut ai_skipped = 0i64;
+    let mut analyzed = 0i64;
+
+    if use_ai {
+        let ai = state
+            .ai
+            .as_ref()
+            .ok_or_else(|| "AI 未配置".to_string())?;
+
+        let files = state
+            .db
+            .list_files(limit as i64, 0)
+            .map_err(|e| e.to_string())?;
+        analyzed = files.len() as i64;
+
+        if files.len() >= 2 {
+            let suggestions = ai
+                .suggest_relations(&files)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            for s in suggestions {
+                let weight = s.conf;
+                if state
+                    .db
+                    .insert_relation(&s.src, &s.dst, &s.rel, weight)
+                    .is_ok()
+                {
+                    ai_added += 1;
+                } else {
+                    ai_skipped += 1;
+                }
+            }
+            state.db.add_ai_cost(0.03).ok();
+        }
+    }
+
+    Ok(EnrichResult {
+        analyzed,
+        heuristic_added: heuristic_added as i64,
+        ai_added,
+        ai_skipped,
+    })
+}
+
+#[tauri::command]
 pub async fn scan_directory(
     app: AppHandle,
     state: State<'_, AppState>,

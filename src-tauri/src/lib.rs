@@ -69,6 +69,7 @@ pub fn run() {
             commands::chat_message_stream,
             commands::scan_directory,
             commands::clear_all_data,
+            commands::enrich_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

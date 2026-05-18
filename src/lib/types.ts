@@ -100,3 +100,10 @@ export interface StreamChunk {
   delta: string;
   done: boolean;
 }
+
+export interface EnrichResult {
+  analyzed: number;
+  heuristic_added: number;
+  ai_added: number;
+  ai_skipped: number;
+}

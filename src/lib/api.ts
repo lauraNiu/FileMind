@@ -10,6 +10,7 @@ import type {
   ScanResult,
   ScanProgressEvent,
   StreamChunk,
+  EnrichResult,
 } from "./types";
 
 export const api = {
@@ -83,4 +84,10 @@ export const api = {
     listen<ScanProgressEvent>("scan-progress", (event) => cb(event.payload)),
 
   clearAllData: () => invoke<void>("clear_all_data"),
+
+  enrichGraph: (useAi: boolean, maxFiles?: number) =>
+    invoke<EnrichResult>("enrich_graph", {
+      useAi,
+      maxFiles: maxFiles ?? null,
+    }),
 };

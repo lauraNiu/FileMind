@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
-import { Search, Share2, RotateCw, Maximize2 } from "lucide-react";
+import { Search, Share2, RotateCw, Maximize2, Sparkles, Wand2 } from "lucide-react";
+import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { GlassCard } from "@/components/GlassCard";
 import { FileDetailDrawer } from "@/components/FileDetailDrawer";
@@ -26,6 +27,7 @@ type GraphInstance = ForceGraphMethods<GraphNode, { source: string; target: stri
 export function Graph() {
   const [data, setData] = useState<GraphData>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
+  const [enriching, setEnriching] = useState<null | "heuristic" | "ai">(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["reference", "derived", "co-project", "similar"])
   );
@@ -148,18 +150,60 @@ export function Graph() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={async () => {
+                setEnriching("heuristic");
+                try {
+                  const r = await api.enrichGraph(false, 200);
+                  toast.success(`规则派生：+${r.heuristic_added} 条关系`);
+                  reload();
+                } catch (e) {
+                  toast.error("派生失败：" + String(e));
+                } finally {
+                  setEnriching(null);
+                }
+              }}
+              disabled={!!enriching}
+              className="px-3 py-1.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-accent)]/40 text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Wand2 className={`w-3.5 h-3.5 ${enriching === "heuristic" ? "animate-pulse" : ""}`} />
+              {enriching === "heuristic" ? "派生中..." : "规则派生"}
+            </button>
+            <button
+              onClick={async () => {
+                setEnriching("ai");
+                try {
+                  const r = await api.enrichGraph(true, 50);
+                  toast.success(
+                    `AI 分析了 ${r.analyzed} 个文件 · 规则 +${r.heuristic_added} · AI +${r.ai_added}${
+                      r.ai_skipped ? ` (跳重复 ${r.ai_skipped})` : ""
+                    }`
+                  );
+                  reload();
+                } catch (e) {
+                  toast.error("AI 补图失败：" + String(e));
+                } finally {
+                  setEnriching(null);
+                }
+              }}
+              disabled={!!enriching}
+              className="px-3 py-1.5 rounded-md bg-[var(--color-ai)]/10 border border-[var(--color-ai)]/30 hover:bg-[var(--color-ai)]/20 text-[12px] text-[var(--color-ai)] transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${enriching === "ai" ? "animate-pulse" : ""}`} />
+              {enriching === "ai" ? "AI 思考中..." : "AI 智能补图"}
+            </button>
+            <button
               onClick={recenter}
               className="px-3 py-1.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors flex items-center gap-1.5"
+              title="重置视图"
             >
               <Maximize2 className="w-3.5 h-3.5" />
-              重置视图
             </button>
             <button
               onClick={reload}
               className="px-3 py-1.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors flex items-center gap-1.5"
+              title="刷新"
             >
               <RotateCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              刷新
             </button>
           </div>
         </div>

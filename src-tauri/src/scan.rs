@@ -202,11 +202,13 @@ pub async fn scan_directory(
     })
 }
 
-fn derive_relations(db: &Db, project_id: &str) -> Result<()> {
+pub fn derive_relations(db: &Db, project_id: &str) -> Result<usize> {
     let files = db.project_files(project_id)?;
     if files.len() < 2 {
-        return Ok(());
+        return Ok(0);
     }
+
+    let mut added = 0usize;
 
     let mut by_dir: std::collections::HashMap<String, Vec<&FileItem>> = std::collections::HashMap::new();
     for f in &files {
@@ -218,12 +220,54 @@ fn derive_relations(db: &Db, project_id: &str) -> Result<()> {
         by_dir.entry(dir).or_default().push(f);
     }
     for (_dir, group) in by_dir.iter() {
-        if group.len() < 2 || group.len() > 12 {
+        if group.len() < 2 {
             continue;
         }
-        for i in 0..group.len() {
-            for j in (i + 1)..group.len() {
-                let _ = db.insert_relation(&group[i].id, &group[j].id, "co-project", 0.5);
+        if group.len() <= 8 {
+            for i in 0..group.len() {
+                for j in (i + 1)..group.len() {
+                    if db.insert_relation(&group[i].id, &group[j].id, "co-project", 0.5).is_ok() {
+                        added += 1;
+                    }
+                }
+            }
+        } else {
+            let mut sorted = group.clone();
+            sorted.sort_by(|a, b| b.size.cmp(&a.size).then(b.mtime.cmp(&a.mtime)));
+            let hub = sorted[0];
+            let weight = (8.0_f64 / group.len() as f64).max(0.25);
+            for f in sorted.iter().skip(1) {
+                if db.insert_relation(&hub.id, &f.id, "co-project", weight).is_ok() {
+                    added += 1;
+                }
+            }
+        }
+    }
+
+    let dirs: Vec<&String> = by_dir.keys().collect();
+    let mut by_parent: std::collections::HashMap<String, Vec<&String>> = std::collections::HashMap::new();
+    for d in &dirs {
+        if let Some(parent) = std::path::Path::new(d).parent().and_then(|p| p.to_str()) {
+            by_parent.entry(parent.to_string()).or_default().push(d);
+        }
+    }
+    for (_p, sibling_dirs) in by_parent.iter() {
+        if sibling_dirs.len() < 2 || sibling_dirs.len() > 6 {
+            continue;
+        }
+        let mut hubs: Vec<&FileItem> = Vec::new();
+        for d in sibling_dirs {
+            if let Some(group) = by_dir.get(*d) {
+                if let Some(hub) = group.iter().max_by_key(|f| (f.size, f.mtime)) {
+                    hubs.push(*hub);
+                }
+            }
+        }
+        for i in 0..hubs.len() {
+            for j in (i + 1)..hubs.len() {
+                if db.insert_relation(&hubs[i].id, &hubs[j].id, "co-project", 0.3).is_ok() {
+                    added += 1;
+                }
             }
         }
     }
@@ -231,7 +275,7 @@ fn derive_relations(db: &Db, project_id: &str) -> Result<()> {
     let mut by_stem: std::collections::HashMap<String, Vec<&FileItem>> = std::collections::HashMap::new();
     for f in &files {
         let stem = file_stem(&f.name);
-        if stem.len() >= 3 {
+        if stem.chars().count() >= 2 {
             by_stem.entry(stem).or_default().push(f);
         }
     }
@@ -242,11 +286,13 @@ fn derive_relations(db: &Db, project_id: &str) -> Result<()> {
         let mut sorted = group.clone();
         sorted.sort_by_key(|f| f.mtime);
         for w in sorted.windows(2) {
-            let _ = db.insert_relation(&w[1].id, &w[0].id, "derived", 0.85);
+            if db.insert_relation(&w[1].id, &w[0].id, "derived", 0.85).is_ok() {
+                added += 1;
+            }
         }
     }
 
-    Ok(())
+    Ok(added)
 }
 
 fn file_stem(name: &str) -> String {
@@ -255,8 +301,87 @@ fn file_stem(name: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_string();
-    base.trim_end_matches(|c: char| c.is_ascii_digit() || matches!(c, 'v' | 'V' | '_' | '-' | '.'))
-        .to_string()
+
+    let suffix_words = [
+        "final", "finalfinal", "draft", "new", "old", "backup", "edited",
+        "revised", "copy", "duplicate", "untitled", "tmp", "temp",
+        "_final", "-final", "_draft", "-draft", "最终", "最终版",
+        "终版", "草稿", "副本", "复制",
+    ];
+
+    let mut s = base.clone();
+    loop {
+        let l = s.to_lowercase();
+        let l = l.trim();
+        let mut matched = false;
+
+        for w in &suffix_words {
+            if l.ends_with(w) && s.len() > w.len() {
+                s.truncate(s.len() - w.len());
+                matched = true;
+                break;
+            }
+        }
+        if matched { continue; }
+
+        let l = s.to_lowercase();
+        let l = l.trim();
+        let chars: Vec<char> = s.chars().collect();
+        if chars.len() >= 2 {
+            let last = chars[chars.len() - 1];
+            let second_last = chars[chars.len() - 2];
+
+            if last == ')' {
+                if let Some(open) = s.rfind('(') {
+                    let inside = &s[open + 1..s.len() - 1];
+                    if inside.chars().all(|c| c.is_ascii_digit()) {
+                        s.truncate(open);
+                        matched = true;
+                    }
+                }
+            }
+            if !matched && (last.is_ascii_digit()
+                || matches!(last, '_' | '-' | '.' | ' ' | '版' | '次'))
+            {
+                s.pop();
+                matched = true;
+            }
+            if !matched && last == 'v' || last == 'V' {
+                if chars.len() >= 3
+                    && (second_last == '_' || second_last == '-' || second_last == '.')
+                {
+                    s.pop();
+                    s.pop();
+                    matched = true;
+                }
+            }
+            let _ = l;
+        }
+        if !matched {
+            break;
+        }
+    }
+
+    let s = s.trim_end_matches(|c: char| matches!(c, '_' | '-' | '.' | ' '));
+    s.to_string()
+}
+
+pub fn derive_relations_global(db: &Db, max_files: usize) -> Result<usize> {
+    use crate::models::FileItem;
+    let files: Vec<FileItem> = db.list_files(max_files as i64, 0)?;
+    let mut by_project: std::collections::HashMap<String, Vec<FileItem>> = std::collections::HashMap::new();
+    for f in files {
+        if let Some(pid) = f.project_id.clone() {
+            by_project.entry(pid).or_default().push(f);
+        }
+    }
+    let mut total = 0usize;
+    for pid in by_project.keys() {
+        if let Ok(n) = derive_relations(db, pid) {
+            total += n;
+        }
+    }
+    Ok(total)
 }
 
 fn is_skipped(path: &Path) -> bool {
