@@ -489,7 +489,7 @@ export function Chat() {
             </div>
           )}
 
-          <GlassCard variant="strong" className="p-2 relative">
+          <div className="relative">
             <AnimatePresence>
               {showSlash && filteredSlash.length > 0 && (
                 <motion.div
@@ -497,22 +497,23 @@ export function Chat() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 6 }}
                   transition={{ duration: 0.12 }}
-                  className="absolute bottom-full left-0 right-0 mb-2 glass-strong rounded-xl p-1.5 shadow-2xl"
+                  className="absolute bottom-full left-0 right-0 mb-2 glass-strong rounded-xl p-1.5 shadow-2xl z-30"
                 >
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-tertiary)] font-mono px-2 py-1">
-                    快捷命令
+                    快捷命令 · 按 ↑↓ 选择，回车确认
                   </div>
                   {filteredSlash.map((c) => (
                     <button
                       key={c.cmd}
                       onClick={() => {
                         setInput(c.template);
+                        setShowSlash(false);
                         setTimeout(() => inputRef.current?.focus(), 0);
                       }}
                       className="w-full flex items-center gap-3 px-2 py-1.5 rounded-md hover:bg-[var(--color-bg-card)] text-left"
                     >
-                      <span className="text-[12px] font-mono text-[var(--color-ai)]">{c.cmd}</span>
-                      <span className="text-[12px] text-[var(--color-text-secondary)]">{c.desc}</span>
+                      <span className="text-[12px] font-mono text-[var(--color-ai)] shrink-0">{c.cmd}</span>
+                      <span className="text-[12px] text-[var(--color-text-secondary)] shrink-0">{c.desc}</span>
                       <span className="ml-auto text-[10px] text-[var(--color-text-tertiary)] font-mono truncate">
                         {c.template}
                       </span>
@@ -522,6 +523,7 @@ export function Chat() {
               )}
             </AnimatePresence>
 
+            <GlassCard variant="strong" className="p-2">
             <div className="flex items-end gap-2">
               <div className="flex flex-col gap-0.5 pl-1 pb-1">
                 <button
@@ -564,7 +566,8 @@ export function Chat() {
                 {loading ? <RotateCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </button>
             </div>
-          </GlassCard>
+            </GlassCard>
+          </div>
           <div className="mt-2 text-[10px] text-[var(--color-text-tertiary)] text-center font-mono flex items-center justify-center gap-3">
             <span>Enter 发送</span>
             <span>·</span>

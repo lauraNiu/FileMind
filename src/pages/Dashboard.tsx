@@ -17,6 +17,7 @@ import { ExtDistChart } from "@/components/ExtDistChart";
 import { ActivityChart } from "@/components/ActivityChart";
 import { TopTagsCard } from "@/components/TopTagsCard";
 import { ScanCard } from "@/components/ScanCard";
+import { BatchSummaryCard } from "@/components/BatchSummaryCard";
 import { api } from "@/lib/api";
 import type { DashboardStats, Project } from "@/lib/types";
 import { formatBytes, formatNumber, formatRelativeTime } from "@/lib/utils";
@@ -254,14 +255,14 @@ export function Dashboard() {
             {[
               {
                 label: `${stats?.temp_files_count ?? "—"} 个文件在 Downloads 中超过 180 天未访问`,
-                action: "查看清单",
-                onClick: () => nav("/files?tag=临时"),
+                action: "清理向导",
+                onClick: () => nav("/temp"),
                 color: "warning" as const,
               },
               {
                 label: `${stats?.duplicate_groups ?? "—"} 组重复文件占用 ${stats ? formatBytes(stats.duplicate_size) : "—"}`,
-                action: "查看清单",
-                onClick: () => nav("/files"),
+                action: "清理向导",
+                onClick: () => nav("/duplicates"),
                 color: "warning" as const,
               },
               {
@@ -293,8 +294,9 @@ export function Dashboard() {
           </GlassCard>
         </motion.div>
 
-        <motion.div variants={itemVariants}>
+        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ScanCard onComplete={refresh} />
+          <BatchSummaryCard onComplete={refresh} />
         </motion.div>
 
         <motion.div variants={itemVariants}>

@@ -1,15 +1,17 @@
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::ai::ZhipuClient;
 use crate::config::{AppConfig, ConfigStore, UserProfile};
 use crate::db::Db;
 use crate::models::*;
+use crate::watcher::WatcherManager;
 use crate::{ops, scan};
 
 pub struct AppState {
     pub db: Arc<Db>,
     pub config: Arc<ConfigStore>,
+    pub watcher: Arc<WatcherManager>,
 }
 
 impl AppState {
@@ -112,6 +114,62 @@ pub async fn regenerate_summary(
 }
 
 #[tauri::command]
+pub async fn batch_summarize(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<BatchSummaryResult, String> {
+    let ai = state.build_ai()?;
+    let take = limit.unwrap_or(20).min(50);
+    let pending = state
+        .db
+        .files_without_summary(take + 1)
+        .map_err(|e| e.to_string())?;
+    let total = pending.len() as i64;
+    let to_process: Vec<_> = pending.into_iter().take(take as usize).collect();
+
+    let mut processed = 0i64;
+    let mut failed = 0i64;
+
+    for (i, f) in to_process.iter().enumerate() {
+        let _ = app.emit(
+            "batch-summary-progress",
+            serde_json::json!({
+                "current": i + 1,
+                "total": to_process.len(),
+                "file_name": f.name,
+            }),
+        );
+        let hint = format!(
+            "类型: {} | 项目: {} | 标签: {}",
+            f.mime_type,
+            f.project_name.clone().unwrap_or_else(|| "无".to_string()),
+            f.tags.join(", ")
+        );
+        match ai.summarize(&f.name, &hint).await {
+            Ok(s) => {
+                let _ = state.db.update_summary(&f.id, &s);
+                processed += 1;
+                state.db.add_ai_cost(0.001).ok();
+            }
+            Err(_) => failed += 1,
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    }
+
+    let _ = app.emit(
+        "batch-summary-done",
+        serde_json::json!({ "processed": processed, "failed": failed }),
+    );
+
+    Ok(BatchSummaryResult {
+        processed,
+        failed,
+        remaining: (total - take).max(0),
+    })
+}
+
+#[tauri::command]
 pub async fn chat_message(
     state: State<'_, AppState>,
     message: String,
@@ -163,9 +221,16 @@ pub async fn scan_directory(
 ) -> Result<ScanResult, String> {
     let db = state.db.clone();
     let max = max_files.map(|m| m as usize);
-    scan::scan_directory(app, db, path, max)
+    let result = scan::scan_directory(app.clone(), db, path.clone(), max)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let watcher = state.watcher.clone();
+    let _ = watcher.add_root(std::path::PathBuf::from(&path), result.project_id.clone());
+
+    let _ = app.emit("watcher-changed", ());
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -241,16 +306,82 @@ pub fn activity_timeline(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn timeline_buckets(
+    state: State<AppState>,
+    days: Option<i64>,
+) -> Result<Vec<TimelineBucket>, String> {
+    let d = days.unwrap_or(30);
+    state
+        .db
+        .timeline_with_files(d)
+        .map(|v| {
+            v.into_iter()
+                .map(|(day, files)| TimelineBucket {
+                    day,
+                    date: chrono::DateTime::from_timestamp(day * 86400, 0)
+                        .map(|dt| dt.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default(),
+                    count: files.len() as i64,
+                    files,
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_duplicates(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<DuplicateGroup>, String> {
+    let lim = limit.unwrap_or(50);
+    state
+        .db
+        .list_duplicate_groups(lim)
+        .map(|groups| {
+            groups
+                .into_iter()
+                .map(|(hash, files)| {
+                    let total_size: i64 = files.iter().map(|f| f.size).sum();
+                    let max_size: i64 = files.iter().map(|f| f.size).max().unwrap_or(0);
+                    DuplicateGroup {
+                        hash,
+                        recoverable: total_size - max_size,
+                        total_size,
+                        files,
+                    }
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_temp_files(
+    state: State<AppState>,
+    days: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<FileItem>, String> {
+    let d = days.unwrap_or(180);
+    let l = limit.unwrap_or(200);
+    state.db.list_temp_files(d, l).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn files_without_summary(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<FileItem>, String> {
+    let l = limit.unwrap_or(50);
+    state.db.files_without_summary(l).map_err(|e| e.to_string())
+}
+
 // ============================ Config + Profile ============================
 
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
     Ok(state.config.safe_view())
-}
-
-#[tauri::command]
-pub fn get_config_raw(state: State<AppState>) -> Result<AppConfig, String> {
-    Ok(state.config.get())
 }
 
 #[tauri::command]
@@ -275,14 +406,8 @@ pub fn save_profile(
                 },
             };
         })
-        .map_err(|e| e.to_string())
-        .map(|c| {
-            let mut safe = c;
-            if !safe.ai.api_key.is_empty() {
-                safe.ai.api_key = "****".into();
-            }
-            safe
-        })
+        .map_err(|e| e.to_string())?;
+    Ok(state.config.safe_view())
 }
 
 #[tauri::command]
@@ -414,6 +539,40 @@ pub fn list_operations(
     limit: Option<i64>,
 ) -> Result<Vec<OperationRecord>, String> {
     state.db.list_operations(limit.unwrap_or(100)).map_err(|e| e.to_string())
+}
+
+// ============================ Watcher ============================
+
+#[tauri::command]
+pub fn watcher_status(state: State<AppState>) -> Result<WatchStatus, String> {
+    let roots = state
+        .watcher
+        .list_roots()
+        .into_iter()
+        .map(|(path, project_id)| WatchedRoot { path, project_id })
+        .collect();
+    Ok(WatchStatus {
+        running: state.watcher.watcher.lock().unwrap().is_some(),
+        roots,
+    })
+}
+
+#[tauri::command]
+pub fn watcher_start(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    state.watcher.start(app, state.db.clone()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn watcher_stop(state: State<AppState>) -> Result<(), String> {
+    let mut w = state.watcher.watcher.lock().unwrap();
+    *w = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn watcher_remove_root(state: State<AppState>, path: String) -> Result<(), String> {
+    state.watcher.remove_root(std::path::Path::new(&path));
+    Ok(())
 }
 
 // ============================ Helpers ============================

@@ -6,11 +6,13 @@ mod models;
 mod ops;
 mod scan;
 mod seed;
+mod watcher;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use commands::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -51,15 +53,28 @@ pub fn run() {
         eprintln!("[ai] no API key configured - user must set in Settings");
     }
 
+    let watcher_mgr = Arc::new(watcher::WatcherManager::new());
+
     let state = AppState {
         db,
         config: Arc::new(cfg_store),
+        watcher: watcher_mgr,
     };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            let state: tauri::State<AppState> = app_handle.state();
+            if let Err(e) = state.watcher.start(app_handle.clone(), state.db.clone()) {
+                eprintln!("[watcher] start failed: {}", e);
+            } else {
+                println!("[watcher] started");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::dashboard_stats,
             commands::list_files,
@@ -71,6 +86,7 @@ pub fn run() {
             commands::get_related_files,
             commands::get_graph_data,
             commands::regenerate_summary,
+            commands::batch_summarize,
             commands::chat_message,
             commands::chat_message_stream,
             commands::scan_directory,
@@ -79,8 +95,11 @@ pub fn run() {
             commands::update_file_tags,
             commands::top_tags,
             commands::activity_timeline,
+            commands::timeline_buckets,
+            commands::list_duplicates,
+            commands::list_temp_files,
+            commands::files_without_summary,
             commands::get_config,
-            commands::get_config_raw,
             commands::save_profile,
             commands::save_ai_config,
             commands::save_scan_config,
@@ -94,6 +113,10 @@ pub fn run() {
             commands::trash_file,
             commands::revert_operation,
             commands::list_operations,
+            commands::watcher_status,
+            commands::watcher_start,
+            commands::watcher_stop,
+            commands::watcher_remove_root,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

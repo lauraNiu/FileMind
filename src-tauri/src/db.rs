@@ -639,6 +639,89 @@ impl Db {
         Ok(())
     }
 
+    pub fn list_temp_files(&self, days_threshold: i64, limit: i64) -> Result<Vec<FileItem>> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff = chrono::Utc::now().timestamp() - days_threshold * 86400;
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.name, f.path, f.ext, f.size, f.mtime, f.mime_type,
+                    f.summary, f.tags, f.project_id, p.name, f.access_count
+             FROM files f LEFT JOIN projects p ON f.project_id = p.id
+             WHERE f.is_temp = 1 AND f.mtime < ?1
+             ORDER BY f.size DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![cutoff, limit], file_row)?;
+        rows.collect::<Result<_, _>>().map_err(Into::into)
+    }
+
+    pub fn list_duplicate_groups(&self, limit: i64) -> Result<Vec<(String, Vec<FileItem>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT content_hash FROM files
+             WHERE content_hash IS NOT NULL AND content_hash != ''
+             GROUP BY content_hash HAVING COUNT(*) > 1
+             ORDER BY SUM(size) DESC LIMIT ?1",
+        )?;
+        let hashes: Vec<String> = stmt
+            .query_map(params![limit], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+
+        let mut groups = Vec::new();
+        for h in hashes {
+            let mut s = conn.prepare(
+                "SELECT f.id, f.name, f.path, f.ext, f.size, f.mtime, f.mime_type,
+                        f.summary, f.tags, f.project_id, p.name, f.access_count
+                 FROM files f LEFT JOIN projects p ON f.project_id = p.id
+                 WHERE f.content_hash = ?1 ORDER BY f.mtime ASC",
+            )?;
+            let files: Vec<FileItem> = s
+                .query_map(params![h], file_row)?
+                .filter_map(Result::ok)
+                .collect();
+            if files.len() > 1 {
+                groups.push((h, files));
+            }
+        }
+        Ok(groups)
+    }
+
+    pub fn files_without_summary(&self, limit: i64) -> Result<Vec<FileItem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.name, f.path, f.ext, f.size, f.mtime, f.mime_type,
+                    f.summary, f.tags, f.project_id, p.name, f.access_count
+             FROM files f LEFT JOIN projects p ON f.project_id = p.id
+             WHERE (f.summary IS NULL OR f.summary = '') AND f.is_temp = 0
+             ORDER BY f.mtime DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], file_row)?;
+        rows.collect::<Result<_, _>>().map_err(Into::into)
+    }
+
+    pub fn timeline_with_files(&self, days: i64) -> Result<Vec<(i64, Vec<FileItem>)>> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let since = now - days * 86400;
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.name, f.path, f.ext, f.size, f.mtime, f.mime_type,
+                    f.summary, f.tags, f.project_id, p.name, f.access_count
+             FROM files f LEFT JOIN projects p ON f.project_id = p.id
+             WHERE f.mtime >= ?1
+             ORDER BY f.mtime DESC LIMIT 500",
+        )?;
+        let files: Vec<FileItem> = stmt
+            .query_map(params![since], file_row)?
+            .filter_map(Result::ok)
+            .collect();
+        let mut by_day: std::collections::BTreeMap<i64, Vec<FileItem>> = std::collections::BTreeMap::new();
+        for f in files {
+            let day = f.mtime / 86400;
+            by_day.entry(day).or_default().push(f);
+        }
+        Ok(by_day.into_iter().rev().collect())
+    }
+
     pub fn add_ai_cost(&self, cost: f64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let cur: f64 = conn

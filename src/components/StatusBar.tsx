@@ -3,6 +3,7 @@ import { PauseCircle, PlayCircle, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { motion } from "framer-motion";
+import { WatcherIndicator } from "./WatcherIndicator";
 
 export function StatusBar() {
   const [stats, setStats] = useState<{
@@ -59,6 +60,10 @@ export function StatusBar() {
             ? `索引中 ${stats.scan.current.toLocaleString()}/${stats.scan.total.toLocaleString()}`
             : `已就绪 · ${stats.scan.total.toLocaleString()} 文件`}
         </span>
+      </div>
+
+      <div className="mx-3">
+        <WatcherIndicator />
       </div>
 
       <div className="flex-1" />

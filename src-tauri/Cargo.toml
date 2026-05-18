@@ -30,6 +30,7 @@ futures-util = "0.3"
 walkdir = "2"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
+notify = "6"
 
 [profile.release]
 opt-level = "s"

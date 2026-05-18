@@ -10,6 +10,9 @@ import { Graph } from "./pages/Graph";
 import { Welcome } from "./pages/Welcome";
 import { Settings } from "./pages/Settings";
 import { History } from "./pages/History";
+import { Timeline } from "./pages/Timeline";
+import { Duplicates } from "./pages/Duplicates";
+import { TempFiles } from "./pages/TempFiles";
 import { api } from "./lib/api";
 import { Sparkles } from "lucide-react";
 
@@ -53,6 +56,9 @@ export default function App() {
           <Route path="projects/:id" element={<ProjectDetail />} />
           <Route path="graph" element={<Graph />} />
           <Route path="chat" element={<Chat />} />
+          <Route path="timeline" element={<Timeline />} />
+          <Route path="duplicates" element={<Duplicates />} />
+          <Route path="temp" element={<TempFiles />} />
           <Route path="settings" element={<Settings />} />
           <Route path="history" element={<History />} />
         </Route>

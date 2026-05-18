@@ -15,6 +15,12 @@ import type {
   DayCount,
   AppConfig,
   OperationRecord,
+  DuplicateGroup,
+  TimelineBucket,
+  BatchSummaryResult,
+  WatchStatus,
+  WatchEventPayload,
+  BatchSummaryProgress,
 } from "./types";
 
 export const api = {
@@ -158,4 +164,31 @@ export const api = {
     invoke<void>("revert_operation", { opId }),
   listOperations: (limit = 100) =>
     invoke<OperationRecord[]>("list_operations", { limit }),
+
+  // Batch / queues
+  batchSummarize: (limit?: number) =>
+    invoke<BatchSummaryResult>("batch_summarize", { limit: limit ?? null }),
+  filesWithoutSummary: (limit = 50) =>
+    invoke<FileItem[]>("files_without_summary", { limit }),
+  onBatchSummaryProgress: (cb: (e: BatchSummaryProgress) => void) =>
+    listen<BatchSummaryProgress>("batch-summary-progress", (event) => cb(event.payload)),
+
+  // Cleanup wizards
+  listDuplicates: (limit = 50) =>
+    invoke<DuplicateGroup[]>("list_duplicates", { limit }),
+  listTempFiles: (days = 180, limit = 200) =>
+    invoke<FileItem[]>("list_temp_files", { days, limit }),
+
+  // Timeline
+  timelineBuckets: (days = 30) =>
+    invoke<TimelineBucket[]>("timeline_buckets", { days }),
+
+  // Watcher
+  watcherStatus: () => invoke<WatchStatus>("watcher_status"),
+  watcherStart: () => invoke<void>("watcher_start"),
+  watcherStop: () => invoke<void>("watcher_stop"),
+  watcherRemoveRoot: (path: string) =>
+    invoke<void>("watcher_remove_root", { path }),
+  onFsEvent: (cb: (e: WatchEventPayload) => void) =>
+    listen<WatchEventPayload>("fs-event", (event) => cb(event.payload)),
 };

@@ -167,3 +167,38 @@ pub struct ScanCountInfo {
     pub total: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateGroup {
+    pub hash: String,
+    pub files: Vec<FileItem>,
+    pub total_size: i64,
+    pub recoverable: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineBucket {
+    pub day: i64,
+    pub date: String,
+    pub files: Vec<FileItem>,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSummaryResult {
+    pub processed: i64,
+    pub failed: i64,
+    pub remaining: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchStatus {
+    pub running: bool,
+    pub roots: Vec<WatchedRoot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchedRoot {
+    pub path: String,
+    pub project_id: String,
+}
+

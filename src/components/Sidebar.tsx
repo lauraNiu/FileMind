@@ -19,13 +19,19 @@ const navItems = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard },
   { to: "/projects", label: "项目", icon: FolderKanban },
   { to: "/files", label: "文件", icon: Files },
+  { to: "/timeline", label: "时间轴", icon: Clock },
   { to: "/graph", label: "图谱", icon: Share2 },
   { to: "/chat", label: "Chat", icon: MessageCircle },
+];
+
+const utilItems = [
+  { to: "/duplicates", label: "重复清理", icon: Files },
+  { to: "/temp", label: "临时文件", icon: Clock },
   { to: "/history", label: "操作历史", icon: HistoryIcon },
   { to: "/settings", label: "设置", icon: SettingsIcon },
 ];
 
-const comingSoon = [{ label: "时间轴", icon: Clock }];
+const comingSoon: { label: string; icon: typeof Clock }[] = [];
 
 export function Sidebar() {
   const location = useLocation();
@@ -43,14 +49,17 @@ export function Sidebar() {
 
   return (
     <aside className="w-[220px] h-full flex flex-col bg-[var(--color-bg-elevated)] border-r border-[var(--color-border-subtle)]">
-      <div className="h-14 flex items-center gap-2 px-5 border-b border-[var(--color-border-subtle)]">
-        <div className="relative">
+      <div
+        className="h-14 flex items-center gap-2 pl-[84px] pr-5 border-b border-[var(--color-border-subtle)]"
+        data-tauri-drag-region
+      >
+        <div className="relative pointer-events-none">
           <Sparkles className="w-5 h-5 text-[var(--color-ai)]" strokeWidth={2.5} />
           <div className="absolute inset-0 blur-md opacity-50">
             <Sparkles className="w-5 h-5 text-[var(--color-ai)]" />
           </div>
         </div>
-        <span className="font-display font-semibold text-[15px] tracking-tight">
+        <span className="font-display font-semibold text-[15px] tracking-tight pointer-events-none">
           FileMind
         </span>
       </div>
@@ -98,24 +107,56 @@ export function Sidebar() {
 
         <div className="mt-6">
           <div className="px-3 mb-2 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium">
-            即将上线
+            工具
           </div>
-          {comingSoon.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div
-                key={item.label}
-                className="flex items-center gap-3 px-3 py-2 text-[13px] text-[var(--color-text-muted)] cursor-not-allowed"
-              >
-                <Icon className="w-[16px] h-[16px]" strokeWidth={2} />
-                <span>{item.label}</span>
-                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)]">
-                  P2
-                </span>
-              </div>
-            );
-          })}
+          <div className="space-y-0.5">
+            {utilItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname.startsWith(item.to);
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={cn(
+                    "relative flex items-center gap-3 px-3 py-2 rounded-md text-[13px] transition-colors duration-150",
+                    isActive
+                      ? "text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]"
+                  )}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="sidebar-active"
+                      className="absolute inset-0 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)]"
+                      transition={{ type: "spring", duration: 0.4, bounce: 0.15 }}
+                    />
+                  )}
+                  <Icon className="w-[16px] h-[16px] relative z-10" strokeWidth={2} />
+                  <span className="relative z-10">{item.label}</span>
+                </NavLink>
+              );
+            })}
+          </div>
         </div>
+        {comingSoon.length > 0 && (
+          <div className="mt-6">
+            <div className="px-3 mb-2 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium">
+              即将上线
+            </div>
+            {comingSoon.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.label}
+                  className="flex items-center gap-3 px-3 py-2 text-[13px] text-[var(--color-text-muted)] cursor-not-allowed"
+                >
+                  <Icon className="w-[16px] h-[16px]" strokeWidth={2} />
+                  <span>{item.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {myViews.length > 0 && (
           <div className="mt-6">

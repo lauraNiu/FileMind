@@ -169,3 +169,45 @@ export interface OperationRecord {
   status: "applied" | "reverted" | "pending" | string;
   created_at: number;
 }
+
+export interface DuplicateGroup {
+  hash: string;
+  files: FileItem[];
+  total_size: number;
+  recoverable: number;
+}
+
+export interface TimelineBucket {
+  day: number;
+  date: string;
+  files: FileItem[];
+  count: number;
+}
+
+export interface BatchSummaryResult {
+  processed: number;
+  failed: number;
+  remaining: number;
+}
+
+export interface WatchedRoot {
+  path: string;
+  project_id: string;
+}
+
+export interface WatchStatus {
+  running: boolean;
+  roots: WatchedRoot[];
+}
+
+export interface WatchEventPayload {
+  kind: "create" | "remove" | "modify" | "rename-from" | "rename-to" | string;
+  path: string;
+  project_id: string | null;
+}
+
+export interface BatchSummaryProgress {
+  current: number;
+  total: number;
+  file_name: string;
+}
