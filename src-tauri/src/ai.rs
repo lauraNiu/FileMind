@@ -15,10 +15,10 @@ pub struct ZhipuClient {
 }
 
 impl ZhipuClient {
-    pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("ZHIPU_API_KEY")
-            .map_err(|_| anyhow!("ZHIPU_API_KEY 未设置。请在 .env 中配置"))?;
-        let model = std::env::var("ZHIPU_MODEL").unwrap_or_else(|_| "glm-4-flash".to_string());
+    pub fn new(api_key: String, model: String) -> Result<Self> {
+        if api_key.trim().is_empty() {
+            anyhow::bail!("API key 为空");
+        }
         Ok(Self {
             api_key,
             model,
@@ -26,6 +26,35 @@ impl ZhipuClient {
                 .timeout(std::time::Duration::from_secs(60))
                 .build()?,
         })
+    }
+
+    pub fn from_env() -> Result<Self> {
+        let api_key = std::env::var("ZHIPU_API_KEY")
+            .map_err(|_| anyhow!("ZHIPU_API_KEY 未设置"))?;
+        let model = std::env::var("ZHIPU_MODEL").unwrap_or_else(|_| "glm-4-air".to_string());
+        Self::new(api_key, model)
+    }
+
+    pub async fn test_connection(&self) -> Result<String> {
+        let body = json!({
+            "model": self.model,
+            "messages": [{ "role": "user", "content": "你好，回复一个字" }],
+            "max_tokens": 10,
+        });
+        let resp = self
+            .http
+            .post(ZHIPU_ENDPOINT)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP {}: {}", status, text);
+        }
+        let parsed: ChatCompletionResp = resp.json().await?;
+        Ok(parsed.choices.into_iter().next().map(|c| c.message.content).unwrap_or_default())
     }
 
     pub async fn summarize(&self, name: &str, content_hint: &str) -> Result<String> {

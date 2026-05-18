@@ -2,13 +2,29 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::ai::ZhipuClient;
+use crate::config::{AppConfig, ConfigStore, UserProfile};
 use crate::db::Db;
 use crate::models::*;
-use crate::scan;
+use crate::{ops, scan};
 
 pub struct AppState {
     pub db: Arc<Db>,
-    pub ai: Option<ZhipuClient>,
+    pub config: Arc<ConfigStore>,
+}
+
+impl AppState {
+    fn build_ai(&self) -> Result<ZhipuClient, String> {
+        let cfg = self.config.get();
+        if !cfg.ai.api_key.is_empty() {
+            return ZhipuClient::new(cfg.ai.api_key, cfg.ai.model).map_err(|e| e.to_string());
+        }
+        ZhipuClient::from_env().map_err(|e| {
+            format!(
+                "AI 未配置：请在「设置」中填入 API Key，或在 .env 中设置 ZHIPU_API_KEY。详情：{}",
+                e
+            )
+        })
+    }
 }
 
 #[tauri::command]
@@ -81,10 +97,7 @@ pub async fn regenerate_summary(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<String, String> {
-    let ai = state
-        .ai
-        .as_ref()
-        .ok_or_else(|| "AI 未配置：请在 .env 中设置 ZHIPU_API_KEY".to_string())?;
+    let ai = state.build_ai()?;
     let f = state.db.get_file(&id).map_err(|e| e.to_string())?;
     let hint = format!(
         "类型: {} | 项目: {} | 标签: {}",
@@ -93,10 +106,7 @@ pub async fn regenerate_summary(
         f.tags.join(", ")
     );
     let summary = ai.summarize(&f.name, &hint).await.map_err(|e| e.to_string())?;
-    state
-        .db
-        .update_summary(&id, &summary)
-        .map_err(|e| e.to_string())?;
+    state.db.update_summary(&id, &summary).map_err(|e| e.to_string())?;
     state.db.add_ai_cost(0.001).ok();
     Ok(summary)
 }
@@ -107,20 +117,13 @@ pub async fn chat_message(
     message: String,
     history: Vec<ChatTurn>,
 ) -> Result<ChatResponse, String> {
-    let ai = state
-        .ai
-        .as_ref()
-        .ok_or_else(|| "AI 未配置：请在 .env 中设置 ZHIPU_API_KEY".to_string())?;
-
+    let ai = state.build_ai()?;
     let candidates = collect_candidates(&state.db, &message)?;
-
     let (content, reasoning, file_ids) = ai
         .answer_question(&message, &history, &candidates)
         .await
         .map_err(|e| e.to_string())?;
-
     state.db.add_ai_cost(0.01).ok();
-
     Ok(ChatResponse {
         content,
         reasoning: Some(reasoning),
@@ -137,20 +140,13 @@ pub async fn chat_message_stream(
     history: Vec<ChatTurn>,
     model: Option<String>,
 ) -> Result<ChatResponse, String> {
-    let ai = state
-        .ai
-        .as_ref()
-        .ok_or_else(|| "AI 未配置：请在 .env 中设置 ZHIPU_API_KEY".to_string())?;
-
+    let ai = state.build_ai()?;
     let candidates = collect_candidates(&state.db, &message)?;
-
     let (content, reasoning, file_ids) = ai
         .answer_question_stream(app, stream_id, &message, &history, &candidates, model.as_deref())
         .await
         .map_err(|e| e.to_string())?;
-
     state.db.add_ai_cost(0.01).ok();
-
     Ok(ChatResponse {
         content,
         reasoning: Some(reasoning),
@@ -159,8 +155,58 @@ pub async fn chat_message_stream(
 }
 
 #[tauri::command]
+pub async fn scan_directory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    max_files: Option<i64>,
+) -> Result<ScanResult, String> {
+    let db = state.db.clone();
+    let max = max_files.map(|m| m as usize);
+    scan::scan_directory(app, db, path, max)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn clear_all_data(state: State<AppState>) -> Result<(), String> {
     state.db.clear_all().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn enrich_graph(
+    state: State<'_, AppState>,
+    use_ai: bool,
+    max_files: Option<i64>,
+) -> Result<EnrichResult, String> {
+    let limit = max_files.unwrap_or(60) as usize;
+    let heuristic_added = scan::derive_relations_global(&state.db, limit)
+        .map_err(|e| e.to_string())?;
+
+    let mut ai_added = 0i64;
+    let mut ai_skipped = 0i64;
+    let mut analyzed = 0i64;
+
+    if use_ai {
+        let ai = state.build_ai()?;
+        let files = state.db.list_files(limit as i64, 0).map_err(|e| e.to_string())?;
+        analyzed = files.len() as i64;
+        if files.len() >= 2 {
+            let suggestions = ai
+                .suggest_relations(&files)
+                .await
+                .map_err(|e| e.to_string())?;
+            for s in suggestions {
+                if state.db.insert_relation(&s.src, &s.dst, &s.rel, s.conf).is_ok() {
+                    ai_added += 1;
+                } else {
+                    ai_skipped += 1;
+                }
+            }
+            state.db.add_ai_cost(0.03).ok();
+        }
+    }
+    Ok(EnrichResult { analyzed, heuristic_added: heuristic_added as i64, ai_added, ai_skipped })
 }
 
 #[tauri::command]
@@ -195,76 +241,182 @@ pub fn activity_timeline(
         .map_err(|e| e.to_string())
 }
 
+// ============================ Config + Profile ============================
+
 #[tauri::command]
-pub async fn enrich_graph(
-    state: State<'_, AppState>,
-    use_ai: bool,
-    max_files: Option<i64>,
-) -> Result<EnrichResult, String> {
-    let limit = max_files.unwrap_or(60) as usize;
+pub fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
+    Ok(state.config.safe_view())
+}
 
-    let heuristic_added = scan::derive_relations_global(&state.db, limit)
-        .map_err(|e| e.to_string())?;
+#[tauri::command]
+pub fn get_config_raw(state: State<AppState>) -> Result<AppConfig, String> {
+    Ok(state.config.get())
+}
 
-    let mut ai_added = 0i64;
-    let mut ai_skipped = 0i64;
-    let mut analyzed = 0i64;
-
-    if use_ai {
-        let ai = state
-            .ai
-            .as_ref()
-            .ok_or_else(|| "AI 未配置".to_string())?;
-
-        let files = state
-            .db
-            .list_files(limit as i64, 0)
-            .map_err(|e| e.to_string())?;
-        analyzed = files.len() as i64;
-
-        if files.len() >= 2 {
-            let suggestions = ai
-                .suggest_relations(&files)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            for s in suggestions {
-                let weight = s.conf;
-                if state
-                    .db
-                    .insert_relation(&s.src, &s.dst, &s.rel, weight)
-                    .is_ok()
-                {
-                    ai_added += 1;
+#[tauri::command]
+pub fn save_profile(
+    state: State<AppState>,
+    name: String,
+    avatar_initial: Option<String>,
+) -> Result<AppConfig, String> {
+    state
+        .config
+        .update(|c| {
+            let initial = avatar_initial.unwrap_or_else(|| {
+                name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or("?".to_string())
+            });
+            c.profile = UserProfile {
+                name: name.clone(),
+                avatar_initial: initial,
+                created_at: if c.profile.created_at == 0 {
+                    chrono::Utc::now().timestamp()
                 } else {
-                    ai_skipped += 1;
+                    c.profile.created_at
+                },
+            };
+        })
+        .map_err(|e| e.to_string())
+        .map(|c| {
+            let mut safe = c;
+            if !safe.ai.api_key.is_empty() {
+                safe.ai.api_key = "****".into();
+            }
+            safe
+        })
+}
+
+#[tauri::command]
+pub fn save_ai_config(
+    state: State<AppState>,
+    api_key: Option<String>,
+    model: Option<String>,
+    budget_yuan: Option<f64>,
+) -> Result<AppConfig, String> {
+    state
+        .config
+        .update(|c| {
+            if let Some(k) = api_key {
+                if !k.is_empty() && !k.contains('*') {
+                    c.ai.api_key = k;
                 }
             }
-            state.db.add_ai_cost(0.03).ok();
-        }
-    }
-
-    Ok(EnrichResult {
-        analyzed,
-        heuristic_added: heuristic_added as i64,
-        ai_added,
-        ai_skipped,
-    })
+            if let Some(m) = model {
+                c.ai.model = m;
+            }
+            if let Some(b) = budget_yuan {
+                c.ai.budget_yuan = b;
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(state.config.safe_view())
 }
 
 #[tauri::command]
-pub async fn scan_directory(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    path: String,
-    max_files: Option<i64>,
-) -> Result<ScanResult, String> {
-    let db = state.db.clone();
-    let max = max_files.map(|m| m as usize);
-    scan::scan_directory(app, db, path, max)
-        .await
-        .map_err(|e| e.to_string())
+pub fn save_scan_config(
+    state: State<AppState>,
+    excluded_dirs: Option<Vec<String>>,
+    sensitive_dirs: Option<Vec<String>>,
+    max_files_per_scan: Option<u32>,
+) -> Result<AppConfig, String> {
+    state
+        .config
+        .update(|c| {
+            if let Some(v) = excluded_dirs { c.scan.excluded_dirs = v; }
+            if let Some(v) = sensitive_dirs { c.scan.sensitive_dirs = v; }
+            if let Some(v) = max_files_per_scan { c.scan.max_files_per_scan = v; }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(state.config.safe_view())
 }
+
+#[tauri::command]
+pub fn complete_onboarding(state: State<AppState>) -> Result<(), String> {
+    state
+        .config
+        .update(|c| {
+            c.onboarded = true;
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn logout(state: State<AppState>) -> Result<(), String> {
+    state.config.clear().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn test_ai_connection(
+    state: State<'_, AppState>,
+    api_key: Option<String>,
+    model: Option<String>,
+) -> Result<String, String> {
+    let cfg = state.config.get();
+    let key = api_key
+        .filter(|k| !k.is_empty() && !k.contains('*'))
+        .or_else(|| if cfg.ai.api_key.is_empty() { None } else { Some(cfg.ai.api_key.clone()) })
+        .or_else(|| std::env::var("ZHIPU_API_KEY").ok())
+        .ok_or_else(|| "未提供 API key".to_string())?;
+    let mdl = model.unwrap_or(cfg.ai.model);
+    let client = ZhipuClient::new(key, mdl).map_err(|e| e.to_string())?;
+    client.test_connection().await.map_err(|e| e.to_string())
+}
+
+// ============================ File operations ============================
+
+#[tauri::command]
+pub fn reveal_in_finder(path: String) -> Result<(), String> {
+    ops::reveal_in_finder(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_with_default(path: String) -> Result<(), String> {
+    ops::open_with_default(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn move_file(
+    state: State<AppState>,
+    file_id: String,
+    new_dir: String,
+    reason: Option<String>,
+) -> Result<OperationRecord, String> {
+    ops::move_file(&state.db, &file_id, &new_dir, reason).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_file(
+    state: State<AppState>,
+    file_id: String,
+    new_name: String,
+    reason: Option<String>,
+) -> Result<OperationRecord, String> {
+    ops::rename_file(&state.db, &file_id, &new_name, reason).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn trash_file(
+    state: State<AppState>,
+    file_id: String,
+    reason: Option<String>,
+) -> Result<OperationRecord, String> {
+    ops::trash_file(&state.db, &file_id, reason).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn revert_operation(state: State<AppState>, op_id: String) -> Result<(), String> {
+    ops::revert(&state.db, &op_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_operations(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<OperationRecord>, String> {
+    state.db.list_operations(limit.unwrap_or(100)).map_err(|e| e.to_string())
+}
+
+// ============================ Helpers ============================
 
 fn collect_candidates(db: &Db, message: &str) -> Result<Vec<FileItem>, String> {
     let keywords = extract_keywords(message);

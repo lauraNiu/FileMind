@@ -1,7 +1,9 @@
 mod ai;
 mod commands;
+mod config;
 mod db;
 mod models;
+mod ops;
 mod scan;
 mod seed;
 
@@ -31,24 +33,28 @@ pub fn run() {
     let app_data_dir = dirs_local_data().join("FileMind");
     std::fs::create_dir_all(&app_data_dir).ok();
     let db_path = app_data_dir.join("filemind.sqlite");
+    let cfg_path = app_data_dir.join("config.json");
     println!("[db] {}", db_path.display());
+    println!("[cfg] {}", cfg_path.display());
 
     let db = db::Db::open(db_path).expect("failed to open database");
     seed::seed_if_empty(&db).expect("failed to seed database");
     let db = Arc::new(db);
 
-    let ai = match ai::ZhipuClient::from_env() {
-        Ok(c) => {
-            println!("[ai] Zhipu client ready");
-            Some(c)
-        }
-        Err(e) => {
-            eprintln!("[ai] disabled: {}", e);
-            None
-        }
-    };
+    let cfg_store = config::ConfigStore::load(cfg_path).expect("failed to load config");
+    let cfg = cfg_store.get();
+    if !cfg.ai.api_key.is_empty() {
+        println!("[ai] using API key from config (model: {})", cfg.ai.model);
+    } else if std::env::var("ZHIPU_API_KEY").is_ok() {
+        println!("[ai] using API key from .env");
+    } else {
+        eprintln!("[ai] no API key configured - user must set in Settings");
+    }
 
-    let state = AppState { db, ai };
+    let state = AppState {
+        db,
+        config: Arc::new(cfg_store),
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -73,6 +79,21 @@ pub fn run() {
             commands::update_file_tags,
             commands::top_tags,
             commands::activity_timeline,
+            commands::get_config,
+            commands::get_config_raw,
+            commands::save_profile,
+            commands::save_ai_config,
+            commands::save_scan_config,
+            commands::complete_onboarding,
+            commands::logout,
+            commands::test_ai_connection,
+            commands::reveal_in_finder,
+            commands::open_with_default,
+            commands::move_file,
+            commands::rename_file,
+            commands::trash_file,
+            commands::revert_operation,
+            commands::list_operations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

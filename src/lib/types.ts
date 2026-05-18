@@ -91,7 +91,9 @@ export interface ScanResult {
 export interface ScanProgressEvent {
   scanned: number;
   indexed: number;
+  total_estimate: number;
   current_path: string;
+  phase: "counting" | "indexing" | "deriving" | "done";
   done: boolean;
   project_id: string;
 }
@@ -116,4 +118,54 @@ export interface TagCount {
 export interface DayCount {
   day: number;
   count: number;
+}
+
+export interface UserProfile {
+  name: string;
+  avatar_initial: string;
+  created_at: number;
+}
+
+export interface AiConfig {
+  model: string;
+  api_key: string;
+  budget_yuan: number;
+  provider: string;
+}
+
+export interface ScanConfig {
+  excluded_dirs: string[];
+  sensitive_dirs: string[];
+  max_files_per_scan: number;
+}
+
+export interface AppConfig {
+  profile: UserProfile;
+  ai: AiConfig;
+  scan: ScanConfig;
+  theme: string;
+  onboarded: boolean;
+}
+
+export interface OperationTarget {
+  file_id: string;
+  file_name: string;
+  from_path: string;
+  to_path: string;
+}
+
+export interface OperationBefore {
+  name: string;
+  path: string;
+}
+
+export interface OperationRecord {
+  id: string;
+  op_type: "move" | "rename" | "trash" | string;
+  target: OperationTarget;
+  before: OperationBefore | null;
+  actor: string;
+  reason: string | null;
+  status: "applied" | "reverted" | "pending" | string;
+  created_at: number;
 }

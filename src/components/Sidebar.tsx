@@ -8,6 +8,8 @@ import {
   MessageCircle,
   Clock,
   Sparkles,
+  Settings as SettingsIcon,
+  History as HistoryIcon,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -17,8 +19,10 @@ const navItems = [
   { to: "/", label: "仪表盘", icon: LayoutDashboard },
   { to: "/projects", label: "项目", icon: FolderKanban },
   { to: "/files", label: "文件", icon: Files },
-  { to: "/graph", label: "图谱", icon: Share2, badge: "NEW" },
+  { to: "/graph", label: "图谱", icon: Share2 },
   { to: "/chat", label: "Chat", icon: MessageCircle },
+  { to: "/history", label: "操作历史", icon: HistoryIcon },
+  { to: "/settings", label: "设置", icon: SettingsIcon },
 ];
 
 const comingSoon = [{ label: "时间轴", icon: Clock }];
@@ -79,11 +83,14 @@ export function Sidebar() {
                 )}
                 <Icon className="w-[16px] h-[16px] relative z-10" strokeWidth={2} />
                 <span className="relative z-10">{item.label}</span>
-                {"badge" in item && item.badge && (
-                  <span className="relative z-10 ml-auto text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-ai)]/15 border border-[var(--color-ai)]/30 text-[var(--color-ai)] font-mono">
-                    {item.badge}
-                  </span>
-                )}
+                {(() => {
+                  const badge = (item as { badge?: string }).badge;
+                  return badge ? (
+                    <span className="relative z-10 ml-auto text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-ai)]/15 border border-[var(--color-ai)]/30 text-[var(--color-ai)] font-mono">
+                      {badge}
+                    </span>
+                  ) : null;
+                })()}
               </NavLink>
             );
           })}

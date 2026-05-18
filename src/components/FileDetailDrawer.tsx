@@ -11,16 +11,24 @@ import {
   Link2,
   Tag,
   Plus,
+  ExternalLink,
+  MoreHorizontal,
+  Edit2,
+  Move,
+  Trash2,
+  Undo2,
 } from "lucide-react";
 import type { FileItem, RelatedFile } from "@/lib/types";
 import { api } from "@/lib/api";
 import { formatBytes } from "@/lib/utils";
 import { FileIcon } from "./FileIcon";
+import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 
 interface Props {
   file: FileItem | null;
   onClose: () => void;
   onTagsChanged?: (fileId: string, newTags: string[]) => void;
+  onFileChanged?: () => void;
 }
 
 const RELATION_LABELS: Record<string, string> = {
@@ -37,14 +45,18 @@ const RELATION_COLORS: Record<string, string> = {
   similar: "text-violet-400 bg-violet-400/10 border-violet-400/20",
 };
 
-export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
+export function FileDetailDrawer({ file, onClose, onTagsChanged, onFileChanged }: Props) {
   const [related, setRelated] = useState<RelatedFile[]>([]);
   const [regenerating, setRegenerating] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
   const [tags, setTags] = useState<string[]>([]);
   const [addingTag, setAddingTag] = useState(false);
   const [newTag, setNewTag] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const tagInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!file) {
@@ -53,26 +65,31 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
       setTags([]);
       setAddingTag(false);
       setNewTag("");
+      setRenaming(false);
+      setMoreOpen(false);
       return;
     }
     setSummary(file.summary);
     setTags(file.tags ?? []);
+    setRenameValue(file.name);
     api.getRelatedFiles(file.id).then(setRelated).catch(() => setRelated([]));
   }, [file]);
 
   useEffect(() => {
-    if (addingTag) {
-      setTimeout(() => tagInputRef.current?.focus(), 50);
-    }
+    if (addingTag) setTimeout(() => tagInputRef.current?.focus(), 50);
   }, [addingTag]);
 
   useEffect(() => {
+    if (renaming) setTimeout(() => renameInputRef.current?.focus(), 50);
+  }, [renaming]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !renaming && !addingTag) onClose();
     };
     if (file) window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [file, onClose]);
+  }, [file, onClose, renaming, addingTag]);
 
   const regenerate = async () => {
     if (!file) return;
@@ -99,9 +116,7 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
     }
   };
 
-  const removeTag = (tag: string) => {
-    persistTags(tags.filter((t) => t !== tag));
-  };
+  const removeTag = (tag: string) => persistTags(tags.filter((t) => t !== tag));
 
   const addTag = () => {
     const t = newTag.trim();
@@ -124,6 +139,79 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
     toast.success("已复制路径");
   };
 
+  const reveal = async () => {
+    if (!file) return;
+    try {
+      await api.revealInFinder(file.path);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const openFile = async () => {
+    if (!file) return;
+    try {
+      await api.openWithDefault(file.path);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const doRename = async () => {
+    if (!file) return;
+    const newName = renameValue.trim();
+    if (!newName || newName === file.name) {
+      setRenaming(false);
+      setRenameValue(file.name);
+      return;
+    }
+    try {
+      const reason = window.prompt("可选：写一句话说明为什么改名（用于操作历史）") || undefined;
+      await api.renameFile(file.id, newName, reason);
+      toast.success(`已重命名为 ${newName}`);
+      setRenaming(false);
+      onFileChanged?.();
+      onClose();
+    } catch (e) {
+      toast.error("重命名失败：" + String(e));
+    }
+  };
+
+  const doMove = async () => {
+    if (!file) return;
+    try {
+      const targetDir = await dialogOpen({
+        directory: true,
+        multiple: false,
+        title: `把 ${file.name} 移到哪？`,
+      });
+      if (!targetDir || typeof targetDir !== "string") return;
+      const reason = window.prompt("可选：写一句话说明为什么移动") || undefined;
+      await api.moveFile(file.id, targetDir, reason);
+      toast.success(`已移到 ${targetDir}`);
+      setMoreOpen(false);
+      onFileChanged?.();
+      onClose();
+    } catch (e) {
+      toast.error("移动失败：" + String(e));
+    }
+  };
+
+  const doTrash = async () => {
+    if (!file) return;
+    if (!window.confirm(`移到废纸篓？\n\n${file.name}\n${file.path}\n\n（可以在「操作历史」回滚）`)) return;
+    try {
+      const reason = window.prompt("可选：写一句话说明为什么删除") || undefined;
+      await api.trashFile(file.id, reason);
+      toast.success("已移入废纸篓 · 可在「操作历史」回滚");
+      setMoreOpen(false);
+      onFileChanged?.();
+      onClose();
+    } catch (e) {
+      toast.error("删除失败：" + String(e));
+    }
+  };
+
   return (
     <AnimatePresence>
       {file && (
@@ -140,18 +228,41 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", duration: 0.4, bounce: 0 }}
-            className="fixed right-0 top-0 bottom-0 w-[440px] bg-[var(--color-bg-elevated)] border-l border-[var(--color-border-default)] z-50 flex flex-col"
+            className="fixed right-0 top-0 bottom-0 w-[460px] bg-[var(--color-bg-elevated)] border-l border-[var(--color-border-default)] z-50 flex flex-col"
           >
             <div className="flex items-center justify-between px-5 h-14 border-b border-[var(--color-border-subtle)]">
               <span className="text-[12px] font-mono text-[var(--color-text-tertiary)]">
                 文件详情
               </span>
-              <button
-                onClick={onClose}
-                className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-[var(--color-bg-card)] text-[var(--color-text-secondary)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-[var(--color-bg-card)] text-[var(--color-text-secondary)] relative"
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                  {moreOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      className="absolute right-0 top-full mt-1 glass-strong rounded-lg p-1 z-10 w-[180px] shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <DrawerMenuItem icon={Edit2} label="重命名" onClick={() => {
+                        setMoreOpen(false);
+                        setRenaming(true);
+                      }} />
+                      <DrawerMenuItem icon={Move} label="移动到..." onClick={doMove} />
+                      <DrawerMenuItem icon={Trash2} label="移到废纸篓" danger onClick={doTrash} />
+                    </motion.div>
+                  )}
+                </button>
+                <button
+                  onClick={onClose}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-[var(--color-bg-card)] text-[var(--color-text-secondary)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -161,9 +272,37 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
                     <FileIcon ext={file.ext} className="w-5 h-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-[15px] font-semibold leading-tight break-words">
-                      {file.name}
-                    </h2>
+                    {renaming ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          ref={renameInputRef}
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") doRename();
+                            if (e.key === "Escape") {
+                              setRenaming(false);
+                              setRenameValue(file.name);
+                            }
+                          }}
+                          className="flex-1 px-2 py-1 rounded bg-[var(--color-bg-card)] border border-[var(--color-ai)] text-[14px] font-semibold outline-none"
+                        />
+                        <button
+                          onClick={doRename}
+                          className="px-2 py-1 rounded bg-[var(--color-accent)] text-black text-[11px] font-medium"
+                        >
+                          保存
+                        </button>
+                      </div>
+                    ) : (
+                      <h2
+                        className="text-[15px] font-semibold leading-tight break-words cursor-pointer hover:text-[var(--color-ai)]"
+                        onClick={() => setRenaming(true)}
+                        title="点击重命名"
+                      >
+                        {file.name}
+                      </h2>
+                    )}
                   </div>
                 </div>
               </div>
@@ -213,23 +352,21 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
                     </span>
                   ))}
                   {addingTag ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        ref={tagInputRef}
-                        value={newTag}
-                        onChange={(e) => setNewTag(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") addTag();
-                          if (e.key === "Escape") {
-                            setAddingTag(false);
-                            setNewTag("");
-                          }
-                        }}
-                        onBlur={addTag}
-                        placeholder="新标签"
-                        className="text-[11px] px-2 py-0.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-accent)]/40 outline-none w-24 text-[var(--color-text-primary)]"
-                      />
-                    </div>
+                    <input
+                      ref={tagInputRef}
+                      value={newTag}
+                      onChange={(e) => setNewTag(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") addTag();
+                        if (e.key === "Escape") {
+                          setAddingTag(false);
+                          setNewTag("");
+                        }
+                      }}
+                      onBlur={addTag}
+                      placeholder="新标签"
+                      className="text-[11px] px-2 py-0.5 rounded bg-[var(--color-bg-card)] border border-[var(--color-accent)]/40 outline-none w-24"
+                    />
                   ) : (
                     <button
                       onClick={() => setAddingTag(true)}
@@ -264,15 +401,13 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
                     {related.slice(0, 10).map((r) => (
                       <div
                         key={r.file.id + r.relation}
-                        className="flex items-center gap-2 p-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border-default)] transition-colors"
+                        className="flex items-center gap-2 p-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)]"
                       >
                         <FileIcon ext={r.file.ext} className="w-3.5 h-3.5" />
                         <span className="text-[12px] truncate flex-1" title={r.file.name}>
                           {r.file.name}
                         </span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded border ${RELATION_COLORS[r.relation]}`}
-                        >
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${RELATION_COLORS[r.relation]}`}>
                           {RELATION_LABELS[r.relation]}
                         </span>
                       </div>
@@ -324,28 +459,85 @@ export function FileDetailDrawer({ file, onClose, onTagsChanged }: Props) {
             <div className="p-4 border-t border-[var(--color-border-subtle)] space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => toast.info("Phase 2 上线：真接通 Finder")}
-                  className="px-3 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border-default)] transition-colors flex items-center justify-center gap-1.5"
+                  onClick={reveal}
+                  className="px-3 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border-default)] flex items-center justify-center gap-1.5"
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
-                  在 Finder 中显示
+                  在 Finder 显示
                 </button>
                 <button
-                  onClick={() => copy(file.path)}
-                  className="px-3 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border-default)] transition-colors flex items-center justify-center gap-1.5"
+                  onClick={openFile}
+                  className="px-3 py-2 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border-default)] flex items-center justify-center gap-1.5"
                 >
-                  <Copy className="w-3.5 h-3.5" />
-                  复制路径
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  默认应用打开
                 </button>
               </div>
-              <button className="w-full px-3 py-2.5 rounded-md bg-[var(--color-ai)]/10 border border-[var(--color-ai)]/30 text-[var(--color-ai)] text-[12px] hover:bg-[var(--color-ai)]/15 transition-colors flex items-center justify-center gap-1.5">
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => copy(file.path)}
+                  className="px-2 py-1.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] flex items-center justify-center gap-1"
+                  title="复制路径"
+                >
+                  <Copy className="w-3 h-3" />
+                  复制路径
+                </button>
+                <button
+                  onClick={doMove}
+                  className="px-2 py-1.5 rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] flex items-center justify-center gap-1"
+                >
+                  <Move className="w-3 h-3" />
+                  移动
+                </button>
+                <button
+                  onClick={doTrash}
+                  className="px-2 py-1.5 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-[11px] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/15 flex items-center justify-center gap-1"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  废纸篓
+                </button>
+              </div>
+              <button className="w-full px-3 py-2.5 rounded-md bg-[var(--color-ai)]/10 border border-[var(--color-ai)]/30 text-[var(--color-ai)] text-[12px] hover:bg-[var(--color-ai)]/15 flex items-center justify-center gap-1.5">
                 <MessageCircle className="w-3.5 h-3.5" />
                 关于此文件问 AI
               </button>
+              <div className="text-[10px] text-[var(--color-text-tertiary)] text-center font-mono flex items-center justify-center gap-1">
+                <Undo2 className="w-2.5 h-2.5" />
+                所有操作可在「历史」页回滚
+              </div>
             </div>
           </motion.aside>
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+function DrawerMenuItem({
+  icon: Icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: typeof FolderOpen;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-[12px] ${
+        danger
+          ? "text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10"
+          : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]"
+      }`}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      {label}
+    </button>
   );
 }

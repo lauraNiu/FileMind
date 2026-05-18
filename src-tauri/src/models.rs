@@ -136,3 +136,34 @@ pub struct DayCount {
     pub count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OperationTarget {
+    pub file_id: String,
+    pub file_name: String,
+    pub from_path: String,
+    pub to_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationBefore {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationRecord {
+    pub id: String,
+    pub op_type: String,
+    pub target: OperationTarget,
+    pub before: Option<OperationBefore>,
+    pub actor: String,
+    pub reason: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanCountInfo {
+    pub total: i64,
+}
+

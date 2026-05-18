@@ -73,6 +73,19 @@ impl Db {
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS operations (
+                id TEXT PRIMARY KEY,
+                op_type TEXT NOT NULL,
+                target TEXT NOT NULL,
+                before_state TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL,
+                reason TEXT,
+                status TEXT NOT NULL DEFAULT 'applied',
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_operations_created ON operations(created_at DESC);
+
             CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
                 name,
                 summary,
@@ -510,6 +523,108 @@ impl Db {
             nodes: nodes.into_values().collect(),
             links,
         })
+    }
+
+    pub fn insert_operation(&self, op: &OperationRecord) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let target = serde_json::to_string(&op.target)?;
+        let before = op.before.as_ref().map(serde_json::to_string).transpose()?.unwrap_or_default();
+        conn.execute(
+            "INSERT OR REPLACE INTO operations (id, op_type, target, before_state, actor, reason, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![op.id, op.op_type, target, before, op.actor, op.reason, op.status, op.created_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_operations(&self, limit: i64) -> Result<Vec<OperationRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, op_type, target, before_state, actor, reason, status, created_at
+             FROM operations ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                let target_str: String = row.get(2)?;
+                let before_str: String = row.get(3)?;
+                Ok(OperationRecord {
+                    id: row.get(0)?,
+                    op_type: row.get(1)?,
+                    target: serde_json::from_str(&target_str).unwrap_or_default(),
+                    before: if before_str.is_empty() {
+                        None
+                    } else {
+                        serde_json::from_str(&before_str).ok()
+                    },
+                    actor: row.get(4)?,
+                    reason: row.get(5)?,
+                    status: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn update_operation_status(&self, id: &str, status: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE operations SET status = ?1 WHERE id = ?2",
+            params![status, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_operation(&self, id: &str) -> Result<OperationRecord> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, op_type, target, before_state, actor, reason, status, created_at
+             FROM operations WHERE id = ?1",
+        )?;
+        let op = stmt.query_row(params![id], |row| {
+            let target_str: String = row.get(2)?;
+            let before_str: String = row.get(3)?;
+            Ok(OperationRecord {
+                id: row.get(0)?,
+                op_type: row.get(1)?,
+                target: serde_json::from_str(&target_str).unwrap_or_default(),
+                before: if before_str.is_empty() {
+                    None
+                } else {
+                    serde_json::from_str(&before_str).ok()
+                },
+                actor: row.get(4)?,
+                reason: row.get(5)?,
+                status: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+        Ok(op)
+    }
+
+    pub fn update_file_path(&self, id: &str, new_path: &str, new_name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE files SET path = ?1, name = ?2 WHERE id = ?3",
+            params![new_path, new_name, id],
+        )?;
+        conn.execute(
+            "UPDATE files_fts SET name = ?1 WHERE rowid = (SELECT rowid FROM files WHERE id = ?2)",
+            params![new_name, id],
+        ).ok();
+        Ok(())
+    }
+
+    pub fn delete_file(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM relations WHERE src_id = ?1 OR dst_id = ?1", params![id])?;
+        conn.execute(
+            "DELETE FROM files_fts WHERE rowid = (SELECT rowid FROM files WHERE id = ?1)",
+            params![id],
+        ).ok();
+        conn.execute("DELETE FROM files WHERE id = ?1", params![id])?;
+        Ok(())
     }
 
     pub fn clear_all(&self) -> Result<()> {

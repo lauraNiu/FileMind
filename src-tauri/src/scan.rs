@@ -37,7 +37,9 @@ const MAX_FILES_DEFAULT: usize = 5000;
 pub struct ScanProgressEvent {
     pub scanned: usize,
     pub indexed: usize,
+    pub total_estimate: usize,
     pub current_path: String,
+    pub phase: String,
     pub done: bool,
     pub project_id: String,
 }
@@ -61,11 +63,27 @@ pub async fn scan_directory(
         .unwrap_or("scanned")
         .to_string();
     let project_id = format!("p_scan_{}", uuid_short());
+    let event_name = "scan-progress";
+
+    let _ = app.emit(
+        event_name,
+        ScanProgressEvent {
+            scanned: 0,
+            indexed: 0,
+            total_estimate: 0,
+            current_path: root.clone(),
+            phase: "counting".into(),
+            done: false,
+            project_id: project_id.clone(),
+        },
+    );
+
+    let total_estimate = count_files(&root, max_files * 3).min(max_files * 3);
 
     db.insert_project(&Project {
         id: project_id.clone(),
         name: format!("📂 {}", project_name),
-        description: Some(format!("从 {} 扫描得到", root)),
+        description: Some(format!("从 {} 扫描得到（预计 {} 文件）", root, total_estimate)),
         status: "active".to_string(),
         last_active: now,
         file_count: 0,
@@ -76,7 +94,6 @@ pub async fn scan_directory(
     let mut scanned = 0usize;
     let mut indexed = 0usize;
     let mut skipped = 0usize;
-    let event_name = "scan-progress";
 
     let walker = WalkDir::new(&root)
         .follow_links(false)
@@ -164,13 +181,15 @@ pub async fn scan_directory(
             skipped += 1;
         }
 
-        if indexed % 25 == 0 {
+        if indexed % 15 == 0 {
             let _ = app.emit(
                 event_name,
                 ScanProgressEvent {
                     scanned,
                     indexed,
+                    total_estimate,
                     current_path: path.to_string_lossy().to_string(),
+                    phase: "indexing".into(),
                     done: false,
                     project_id: project_id.clone(),
                 },
@@ -178,6 +197,19 @@ pub async fn scan_directory(
             tokio::task::yield_now().await;
         }
     }
+
+    let _ = app.emit(
+        event_name,
+        ScanProgressEvent {
+            scanned,
+            indexed,
+            total_estimate,
+            current_path: "派生关系...".into(),
+            phase: "deriving".into(),
+            done: false,
+            project_id: project_id.clone(),
+        },
+    );
 
     if let Err(e) = derive_relations(&db, &project_id) {
         eprintln!("[scan] relation derivation failed: {}", e);
@@ -188,7 +220,9 @@ pub async fn scan_directory(
         ScanProgressEvent {
             scanned,
             indexed,
+            total_estimate,
             current_path: String::new(),
+            phase: "done".into(),
             done: true,
             project_id: project_id.clone(),
         },
@@ -200,6 +234,28 @@ pub async fn scan_directory(
         root,
         project_id,
     })
+}
+
+pub fn count_files(root: &str, cap: usize) -> usize {
+    let mut count = 0;
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !is_skipped(e.path()))
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_file() {
+            let name = entry.file_name().to_string_lossy();
+            if name.starts_with('.') || name.starts_with("~$") {
+                continue;
+            }
+            count += 1;
+            if count >= cap {
+                break;
+            }
+        }
+    }
+    count
 }
 
 pub fn derive_relations(db: &Db, project_id: &str) -> Result<usize> {

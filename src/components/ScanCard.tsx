@@ -50,7 +50,9 @@ export function ScanCard({ onComplete }: Props) {
       setProgress({
         scanned: 0,
         indexed: 0,
+        total_estimate: 0,
         current_path: selected,
+        phase: "counting",
         done: false,
         project_id: "",
       });
@@ -94,25 +96,52 @@ export function ScanCard({ onComplete }: Props) {
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="mt-2 space-y-2">
-                <div className="flex items-center gap-2 text-[12px]">
-                  <Loader2 className="w-3.5 h-3.5 text-[var(--color-ai)] animate-spin" />
-                  <span className="text-[var(--color-text-secondary)]">
-                    已发现 <span className="text-[var(--color-text-primary)] font-mono">{formatNumber(progress.scanned)}</span>，已索引{" "}
-                    <span className="text-[var(--color-accent)] font-mono">{formatNumber(progress.indexed)}</span>
-                  </span>
-                </div>
-                <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono truncate" title={progress.current_path}>
-                  → {progress.current_path}
-                </div>
-                <div className="h-1 rounded-full bg-[var(--color-bg-base)] overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-[var(--color-ai)] to-[var(--color-accent)]"
-                    animate={{ width: ["10%", "60%", "30%", "85%", "50%"] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                  />
-                </div>
-              </div>
+              {(() => {
+                const phase = progress.phase ?? "indexing";
+                const total = progress.total_estimate || 0;
+                const pct = phase === "counting"
+                  ? 0
+                  : phase === "done"
+                  ? 100
+                  : total > 0
+                  ? Math.min(98, Math.round((progress.indexed / total) * 100))
+                  : 0;
+                const phaseLabel: Record<string, string> = {
+                  counting: "清点文件...",
+                  indexing: "索引中",
+                  deriving: "建立关系...",
+                  done: "完成",
+                };
+                return (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-center gap-2 text-[12px]">
+                      <Loader2 className="w-3.5 h-3.5 text-[var(--color-ai)] animate-spin" />
+                      <span className="text-[var(--color-text-secondary)]">
+                        {phaseLabel[phase]}
+                      </span>
+                      <span className="ml-auto text-[11px] font-mono text-[var(--color-accent)]">
+                        {pct}%
+                      </span>
+                    </div>
+                    {phase !== "counting" && total > 0 && (
+                      <div className="text-[10.5px] font-mono text-[var(--color-text-tertiary)]">
+                        已索引 <span className="text-[var(--color-text-primary)]">{formatNumber(progress.indexed)}</span> / 预计 {formatNumber(total)}{" "}
+                        · 已遍历 {formatNumber(progress.scanned)}
+                      </div>
+                    )}
+                    <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono truncate" title={progress.current_path}>
+                      → {progress.current_path || "—"}
+                    </div>
+                    <div className="h-1 rounded-full bg-[var(--color-bg-base)] overflow-hidden">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-[var(--color-ai)] to-[var(--color-accent)]"
+                        animate={{ width: `${pct}%` }}
+                        transition={{ duration: 0.4, ease: "easeOut" }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
             </motion.div>
           ) : last ? (
             <motion.div

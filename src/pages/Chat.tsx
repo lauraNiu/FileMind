@@ -20,6 +20,7 @@ import { GlassCard } from "@/components/GlassCard";
 import { FileRow } from "@/components/FileRow";
 import { FileDetailDrawer } from "@/components/FileDetailDrawer";
 import { api } from "@/lib/api";
+import { MODELS } from "@/lib/models";
 import type { ChatMessage, FileItem } from "@/lib/types";
 import { toast } from "sonner";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
@@ -40,13 +41,6 @@ const SLASH_COMMANDS: { cmd: string; desc: string; template: string }[] = [
   { cmd: "/帮助", desc: "如何使用", template: "你能帮我做什么？" },
 ];
 
-const MODELS: { value: string; label: string; hint: string; tier: "free" | "fast" | "smart" }[] = [
-  { value: "glm-4-flash", label: "GLM-4 Flash", hint: "免费 · 快", tier: "free" },
-  { value: "glm-4-air", label: "GLM-4 Air", hint: "推荐 · 便宜稳", tier: "fast" },
-  { value: "glm-4-airx", label: "GLM-4 AirX", hint: "更聪明", tier: "fast" },
-  { value: "glm-4-plus", label: "GLM-4 Plus", hint: "顶级 · 贵", tier: "smart" },
-];
-
 const STORAGE_MODEL = "filemind:chat:model";
 
 export function Chat() {
@@ -61,6 +55,14 @@ export function Chat() {
   const [model, setModel] = useState<string>(() => {
     return localStorage.getItem(STORAGE_MODEL) || "glm-4-air";
   });
+
+  useEffect(() => {
+    if (!localStorage.getItem(STORAGE_MODEL)) {
+      api.getConfig().then((c) => {
+        if (c.ai.model) setModel(c.ai.model);
+      }).catch(() => {});
+    }
+  }, []);
   const [modelOpen, setModelOpen] = useState(false);
   const [contextFiles, setContextFiles] = useState<FileItem[]>([]);
   const [contextFolders, setContextFolders] = useState<string[]>([]);
